@@ -9,20 +9,22 @@ const STAGNATION_CONSECUTIVE = 3;
 // Word-boundary regex helper
 const WB = (word: string): RegExp => new RegExp(`\\b${word}\\b`, 'i');
 
-// Claim density patterns
+// Claim density patterns — ordered exclusive to avoid double-counting
+// (B4 fix: \d+% matched both percentage AND 2-digit pattern)
 const CLAIM_PATTERNS = [
-  /\b\d+(\.\d+)?%/g,                           // Percentages
-  /\b\d{2,}\b/g,                                // Numbers ≥ 2 digits
+  /\b\d+(\.\d+)?%/g,                           // Percentages (must be first)
+  /\b\d{2,}(?!\s*%)\b/g,                        // Numbers ≥ 2 digits (exclude % suffix)
   /\b(always|never|all|none|every|must)\b/gi,   // Absolutes
   /\b(proves?|confirms?|demonstrates?|shows?)\b/gi, // Causal claims
 ];
 
-// Metacognitive filler patterns
+// Metacognitive filler patterns — /i only, NO /g
+// (B1 fix: global flag causes .test() to mutate lastIndex per ECMAScript §22.2.5.11)
 const METACOG_PATTERNS = [
-  /\b(let me think|let me consider|I need to think|I should think)\b/gi,
-  /\b(hmm|well|okay so|alright)\b/gi,
-  /\b(on second thought|wait|actually no)\b/gi,
-  /\b(I'm not sure|I think maybe|perhaps I should)\b/gi,
+  /\b(let me think|let me consider|I need to think|I should think)\b/i,
+  /\b(hmm|well|okay so|alright)\b/i,
+  /\b(on second thought|wait|actually no)\b/i,
+  /\b(I'm not sure|I think maybe|perhaps I should)\b/i,
 ];
 
 // Fallacy patterns
@@ -206,8 +208,7 @@ export class QualityMetricsService {
       if (METACOG_PATTERNS.some(p => p.test(s))) {
         metacogSentences++;
       }
-  
-      for (const p of METACOG_PATTERNS) p.lastIndex = 0;
+      // B1 fix: lastIndex reset no longer needed — /g flag removed from METACOG_PATTERNS
     }
     const ratio = round(metacogSentences / sentences.length);
     if (ratio > 0.3) {
@@ -381,9 +382,8 @@ export class QualityMetricsService {
     if (!thought.trim()) return 0;
     const sentences = thought.split(/[.!?]+/).filter(s => s.trim().length > 0);
     if (sentences.length === 0) return 0;
-    // Imperative ratio
+    // Imperative ratio — .match() with /g returns all matches, does NOT mutate lastIndex
     const imperatives = (thought.match(IMPERATIVE_VERBS) || []).length;
-    IMPERATIVE_VERBS.lastIndex = 0;
     const imperativeRatio = Math.min(imperatives / sentences.length, 1);
     // Specificity: numbers with units, file paths, extensions
     let specificityCount = 0;
@@ -393,7 +393,6 @@ export class QualityMetricsService {
     const specificity = Math.min(specificityCount / sentences.length, 1);
     // Concreteness: absence of vague phrases
     const vagueCount = (thought.match(VAGUE_PHRASES) || []).length;
-    VAGUE_PHRASES.lastIndex = 0;
     const concreteness = clamp(1 - vagueCount / Math.max(sentences.length, 1));
     return clamp(
       0.4 * imperativeRatio +
@@ -402,24 +401,7 @@ export class QualityMetricsService {
     );
   }
 
-  // Session statistics
-  generateSessionStats(): Record<string, unknown> {
-    return {
-      totalThoughts: this.history.length,
-      avgQuality: this.history.length > 0
-        ? round(this.history.reduce((a, b) => a + b, 0) / this.history.length)
-        : 0,
-      qualityTrend: this.getTrend(),
-      ewmaFinal: this.ewma !== null ? round(this.ewma) : null,
-      confidenceVariance: this.confidenceHistory.length > 0
-        ? round(Math.sqrt(
-            this.confidenceHistory.reduce((s, v, _, a) =>
-              s + (v - a.reduce((x, y) => x + y, 0) / a.length) ** 2, 0,
-            ) / this.confidenceHistory.length,
-          ))
-        : null,
-    };
-  }
+  // TD3: generateSessionStats() removed — dead code, never called
 }
 
 function shannonEntropy(scores: number[]): number {

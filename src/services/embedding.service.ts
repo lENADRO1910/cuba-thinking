@@ -1,3 +1,5 @@
+import { loadTransformersModule } from './transformers-loader.js';
+
 type Pipeline = (text: string, options?: Record<string, unknown>) => Promise<{ data: ArrayLike<number> }>;
 type CosSim = (a: ArrayLike<number>, b: ArrayLike<number>) => number;
 
@@ -5,14 +7,11 @@ let _pipeline: ((task: string, model: string, opts?: Record<string, unknown>) =>
 let _cos_sim: CosSim | null = null;
 
 async function loadTransformers(): Promise<boolean> {
-  try {
-    const mod = await import('@huggingface/transformers');
-    _pipeline = mod.pipeline as unknown as typeof _pipeline;
-    _cos_sim = mod.cos_sim as unknown as CosSim;
-    return true;
-  } catch {
-    return false;
-  }
+  const mod = await loadTransformersModule();
+  if (!mod) return false;
+  _pipeline = mod.pipeline as unknown as typeof _pipeline;
+  _cos_sim = mod.cos_sim as unknown as CosSim;
+  return true;
 }
 
 export class EmbeddingService {

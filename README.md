@@ -48,9 +48,8 @@ AI agents think in flat, unstructured sequences. Cuba-Thinking gives them:
 | 5-bias detector | ✅ | ❌ |
 | Stagnation detection | ✅ | ❌ |
 | Reasoning type classification | ✅ | ❌ |
-| Session statistics aggregation | ✅ | ❌ |
 | Graceful degradation | ✅ | ❌ |
-| Dependencies | **4** | 13+ |
+| Dependencies | **3** | 13+ |
 
 ---
 
@@ -420,10 +419,27 @@ All features follow the **silent by default** principle — they only appear whe
 ## Test Results
 
 ```
-Test Suites: 7 passed, 7 total
-Tests:       159 passed, 159 total
+Test Suites: 9 passed, 9 total
+Tests:       246 passed, 246 total
 Failures:    0
 ```
+
+### Coverage
+
+| File | Stmts | Branch | Funcs | Lines |
+|------|:-----:|:------:|:-----:|:-----:|
+| **All files** | **91.47%** | **83.51%** | **96.87%** | **92.9%** |
+| formatter.ts | 100% | 100% | 100% | 100% |
+| types.ts | 100% | 100% | 100% | 100% |
+| stage-engine.service.ts | 100% | 100% | 100% | 100% |
+| bias-detector.service.ts | 100% | 100% | 100% | 100% |
+| quality-metrics.service.ts | 95.95% | 86.25% | 100% | 99.53% |
+| anti-hallucination.service.ts | 97.36% | 92.85% | 100% | 100% |
+| cognitive-processor.ts | 86.5% | 64.4% | 80% | 86.4% |
+| embedding.service.ts | 66.66% | 62.5% | 93.75% | 69.76% |
+| nli.service.ts | 71.42% | 57.14% | 100% | 71.05% |
+
+> **Note**: embedding/nli services depend on ONNX model loading. Uncovered lines are hardware-dependent model inference paths that require the actual model binaries.
 
 ### Coverage by Category
 
@@ -435,6 +451,8 @@ Failures:    0
 | Stage Engine (6-stage FSM) | 24 | Auto-detection, transitions, weights, confidence ranges |
 | Embedding Service (BGE + fallback) | 18 | Cosine similarity, keyword fallback, cache, graceful degradation |
 | Bias Detector (5 biases) | 12 | Confirmation, anchoring, availability, overconfidence, sunk cost |
+| Formatter (response rendering) | 48 | All 14 render functions, stage/trend icons, all sections, bar() edges |
+| Coverage Boost (edge cases) | 32 | NLI mocks, model fallbacks, deep branches |
 
 ### Nemesis Protocol (Adversarial Testing)
 
@@ -477,28 +495,39 @@ All features validated in a 13-thought live session:
 cuba-thinking/
 ├── package.json
 ├── tsconfig.json
+├── jest.config.mjs
 └── src/
     ├── index.ts                          # MCP server + MCTS backtracking
     ├── types.ts                          # Zod schemas + TypeScript interfaces
-    ├── formatter.ts                      # Response rendering + memory symbiosis
+    ├── formatter.ts                      # Response rendering + memory symbiosis (14 renderers)
+    ├── __tests__/
+    │   ├── anti-hallucination.test.ts     # 28 tests
+    │   ├── bias-detector.test.ts          # 12 tests
+    │   ├── cognitive-processor.test.ts    # 35 tests
+    │   ├── coverage-boost.test.ts         # 32 tests (edge cases)
+    │   ├── embedding.test.ts             # 18 tests
+    │   ├── formatter.test.ts             # 48 tests
+    │   ├── quality-metrics.test.ts        # 42 tests
+    │   ├── stage-engine.test.ts           # 24 tests
+    │   └── v2-nemesis.test.ts            # 7 tests (adversarial)
     └── services/
-        ├── cognitive-processor.ts        # Central orchestrator + quality history
+        ├── cognitive-processor.ts        # Central orchestrator (6 phases, CC~7)
         ├── embedding.service.ts          # BGE-384d + keyword fallback
         ├── nli.service.ts                # DeBERTa NLI cross-encoder
         ├── stage-engine.service.ts       # 6-stage FSM
         ├── quality-metrics.service.ts    # 6D + EWMA + metacognitive analysis
         ├── anti-hallucination.service.ts # 6-layer verification + NLI pipeline
-        └── bias-detector.service.ts      # 5-bias detection
+        ├── bias-detector.service.ts      # 5-bias detection
+        └── transformers-loader.ts        # Shared HuggingFace module loader
 ```
 
-### Dependencies (4 total)
+### Dependencies (3 total)
 
 | Package | Purpose |
 |---------|---------|
 | `@modelcontextprotocol/sdk` | MCP protocol server |
 | `@huggingface/transformers` | Local BGE embeddings + NLI cross-encoder (lazy init) |
 | `zod` | Input validation |
-| `chalk` | Terminal formatting |
 
 ### Graceful Degradation
 

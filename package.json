@@ -1,6 +1,6 @@
 {
   "name": "cuba-thinking",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "description": "Advanced sequential thinking MCP with semantic embeddings, anti-hallucination, and cognitive stage engine",
   "license": "MIT",
   "author": "Cuba MCP Team",

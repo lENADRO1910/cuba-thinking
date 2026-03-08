@@ -1,3 +1,5 @@
+import { loadTransformersModule } from './transformers-loader.js';
+
 type ZeroShotPipeline = (
   text: string,
   labels: string[],
@@ -7,13 +9,10 @@ type ZeroShotPipeline = (
 let _pipeline: ((task: string, model: string, opts?: Record<string, unknown>) => Promise<unknown>) | null = null;
 
 async function loadTransformers(): Promise<boolean> {
-  try {
-    const mod = await import('@huggingface/transformers');
-    _pipeline = mod.pipeline as unknown as typeof _pipeline;
-    return true;
-  } catch {
-    return false;
-  }
+  const mod = await loadTransformersModule();
+  if (!mod) return false;
+  _pipeline = mod.pipeline as unknown as typeof _pipeline;
+  return true;
 }
 
 export interface NLIResult {
@@ -113,5 +112,11 @@ export class NLIService {
     } catch {
       return null;
     }
+  }
+
+  // TD5: reset method for symmetry with other services
+  reset(): void {
+    // NLI is stateless per-call (no caching) — reset is a no-op
+    // but maintains the contract: all services implement reset()
   }
 }

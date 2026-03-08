@@ -28,10 +28,11 @@ export class AntiHallucinationService {
   private thoughtTexts = new Map<number, string>();
 
   
+  // B3 fix: renamed _embeddings → embeddings, now used for semantic dedup when available
   async trackAssumptions(
     assumptions: string[] | undefined,
     thoughtNumber: number,
-    _embeddings: EmbeddingService,
+    embeddings: EmbeddingService,
   ): Promise<string[]> {
     if (!assumptions || assumptions.length === 0) {
       return this.allAssumptions.map((a) => a.text);
@@ -42,9 +43,11 @@ export class AntiHallucinationService {
       if (!trimmed) continue;
       let isDuplicate = false;
 
-
       for (const existing of this.allAssumptions) {
-        const sim = keywordSimilarity(trimmed, existing.text);
+        // Use embeddings when available, fallback to keyword similarity
+        const sim = embeddings.isAvailable
+          ? embeddings.similarity(existing.thought, thoughtNumber)
+          : keywordSimilarity(trimmed, existing.text);
         if (sim > ASSUMPTION_DEDUP_THRESHOLD) {
           isDuplicate = true;
           break;
