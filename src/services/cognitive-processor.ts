@@ -7,6 +7,7 @@ import type {
   FatigueReport,
 } from '../types.js';
 import { EmbeddingService } from './embedding.service.js';
+import { NLIService } from './nli.service.js';
 import { StageEngine } from './stage-engine.service.js';
 import { QualityMetricsService } from './quality-metrics.service.js';
 import { AntiHallucinationService } from './anti-hallucination.service.js';
@@ -17,6 +18,7 @@ const FATIGUE_CRITICAL = 5;
 
 export class CognitiveProcessor {
   private readonly embeddings: EmbeddingService;
+  private readonly nli: NLIService;
   private readonly stage: StageEngine;
   private readonly quality: QualityMetricsService;
   private readonly antiHallucination: AntiHallucinationService;
@@ -27,9 +29,11 @@ export class CognitiveProcessor {
   private previousStage: string | null = null;
   private consecutiveQualityDrops = 0;
   private lastQuality = 0;
+  private qualityByThought = new Map<number, number>();
 
   constructor() {
     this.embeddings = new EmbeddingService();
+    this.nli = new NLIService();
     this.stage = new StageEngine();
     this.quality = new QualityMetricsService();
     this.antiHallucination = new AntiHallucinationService();
@@ -40,6 +44,7 @@ export class CognitiveProcessor {
     const { thought, thoughtNumber, totalThoughts, nextThoughtNeeded } = input;
     if (thoughtNumber === 1) {
       this.embeddings.ensureReady().catch(() => {});
+      this.nli.ensureReady().catch(() => {});
     }
     await this.embeddings.embed(thought, thoughtNumber);
     const stageInfo = this.stage.processStage(
@@ -60,7 +65,7 @@ export class CognitiveProcessor {
     const qualityTrend = this.quality.getTrend();
     const stability = this.quality.stabilityScore(qualityScores);
     const contradictions = await this.antiHallucination.detectContradictions(
-      thought, thoughtNumber, this.embeddings,
+      thought, thoughtNumber, this.embeddings, this.nli,
     );
     const coherence = this.embeddings.isAvailable && thoughtNumber > 1
       ? this.embeddings.similarity(thoughtNumber - 1, thoughtNumber)
@@ -114,6 +119,13 @@ export class CognitiveProcessor {
       this.thoughtHistory.push('');
     }
     this.thoughtHistory[thoughtNumber - 1] = thought;
+    this.qualityByThought.set(thoughtNumber, qualityScores.overall);
+
+    // MCTS: Find best historical thought for potential rollback
+    let bestHistoricalQuality: { thoughtNumber: number; quality: number } | undefined;
+    if (ewmaReward < 0.40 && thoughtNumber > 3) {
+      bestHistoricalQuality = this.findBestHistoricalThought(thoughtNumber);
+    }
 
 
     const claimDensityResult = this.quality.measureClaimDensity(thought);
@@ -176,6 +188,7 @@ export class CognitiveProcessor {
       confidenceVariance,
       topologyOrphanCount: topologyResult.orphanCount > 0 ? topologyResult.orphanCount : undefined,
       topologyLinearRatio: topologyResult.linearRatio !== 1 ? topologyResult.linearRatio : undefined,
+      bestHistoricalQuality,
     };
   }
 
@@ -237,5 +250,20 @@ export class CognitiveProcessor {
     this.previousStage = null;
     this.consecutiveQualityDrops = 0;
     this.lastQuality = 0;
+    this.qualityByThought.clear();
+  }
+
+  private findBestHistoricalThought(
+    currentThought: number,
+  ): { thoughtNumber: number; quality: number } {
+    let bestNum = 1;
+    let bestQuality = 0;
+    for (const [num, quality] of this.qualityByThought.entries()) {
+      if (num < currentThought && quality > bestQuality) {
+        bestNum = num;
+        bestQuality = quality;
+      }
+    }
+    return { thoughtNumber: bestNum, quality: Math.round(bestQuality * 100) / 100 };
   }
 }

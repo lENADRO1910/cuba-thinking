@@ -132,6 +132,30 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const coerced = coerceInput(rawArgs);
     const parsed = CubaThinkingInputSchema.parse(coerced);
     const result = await processor.process(parsed);
+
+    // MCTS Forced Backtracking: reject thought when EWMA critically low
+    if (
+      result.ewmaReward !== undefined &&
+      result.ewmaReward < 0.40 &&
+      result.thoughtNumber > 3 &&
+      result.bestHistoricalQuality
+    ) {
+      const best = result.bestHistoricalQuality;
+      return {
+        content: [{
+          type: 'text' as const,
+          text:
+            `⛔ MCTS BACKTRACK — EWMA Reward ${(result.ewmaReward * 100).toFixed(0)}% < 40% threshold\n` +
+            `Thought #${result.thoughtNumber} REJECTED at protocol level.\n` +
+            `Rollback to thought #${best.thoughtNumber} (quality: ${(best.quality * 100).toFixed(0)}%).\n` +
+            `You MUST branch with: branchFromThought: ${best.thoughtNumber}\n` +
+            `Explore a COMPLETELY DIFFERENT reasoning path.\n\n` +
+            formatResponse(result),
+        }],
+        isError: true,
+      };
+    }
+
     return {
       content: [{ type: 'text' as const, text: formatResponse(result) }],
     };

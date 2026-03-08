@@ -144,4 +144,5 @@ export interface CubaThinkingOutput {
   confidenceVariance?: number;
   topologyOrphanCount?: number;
   topologyLinearRatio?: number;
+  bestHistoricalQuality?: { thoughtNumber: number; quality: number };
 }

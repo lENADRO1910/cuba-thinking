@@ -5,6 +5,7 @@ import type {
 } from '../types.js';
 import { EmbeddingService, keywordSimilarity } from './embedding.service.js';
 import { CONFIDENCE_RANGES } from './stage-engine.service.js';
+import type { NLIService } from './nli.service.js';
 
 const NEGATION_WORDS = new Set([
   'not', 'no', 'never', 'incorrect', 'wrong', 'mistake',
@@ -63,6 +64,7 @@ export class AntiHallucinationService {
     thought: string,
     thoughtNumber: number,
     embeddings: EmbeddingService,
+    nli?: NLIService,
   ): Promise<Contradiction[]> {
     this.thoughtTexts.set(thoughtNumber, thought);
     if (thoughtNumber <= 1) return [];
@@ -79,6 +81,21 @@ export class AntiHallucinationService {
         sim = keywordSimilarity(thought, prevText);
       }
       if (sim > CONTRADICTION_SIM_THRESHOLD) {
+        // Stage 2: NLI cross-encoder (semantic contradiction detection)
+        if (nli?.isAvailable) {
+          const nliResult = await nli.classify(prevText, thought);
+          if (nliResult && nliResult.label === 'contradiction' && nliResult.contradictionScore > 0.85) {
+            contradictions.push({
+              thoughtA: prevNum,
+              thoughtB: thoughtNumber,
+              similarity: Math.round(sim * 100) / 100,
+              description: `NLI-verified contradiction between thought #${prevNum} and #${thoughtNumber} (NLI: ${(nliResult.contradictionScore * 100).toFixed(0)}%, semantic: ${(sim * 100).toFixed(0)}%)`,
+            });
+            continue;
+          }
+        }
+
+        // Fallback: negation polarity check
         const prevNegScore = countNegations(prevText.toLowerCase());
         // Semantic polarity check
         const polarityDiff = Math.abs(currentNegScore - prevNegScore);

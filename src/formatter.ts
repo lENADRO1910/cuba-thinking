@@ -149,6 +149,24 @@ export function formatResponse(output: CubaThinkingOutput): string {
     lines.push(`📏 Confidence variance: σ=${output.confidenceVariance.toFixed(2)} — reasoning stability is low`);
   }
 
+  // Cortex-Hippocampus Symbiosis: Memory Recall at problem definition
+  if (output.stage.current === 'DEFINE' && output.thoughtNumber <= 2) {
+    lines.push('');
+    lines.push('── Memory Recall ─────────────────────────────────');
+    lines.push('💾 Check long-term memory before proceeding:');
+    lines.push('  → cuba_faro(query:"[topic]") — search past knowledge');
+    lines.push('  → cuba_expediente(query:"[topic]") — check past errors/solutions');
+  }
+
+  // Cortex-Hippocampus Symbiosis: Memory Consolidation at conclusion
+  if (output.stage.current === 'SYNTHESIZE' && !output.nextThoughtNeeded) {
+    lines.push('');
+    lines.push('── Memory Consolidation ──────────────────────────');
+    lines.push('✓ Reasoning complete and validated.');
+    lines.push('💾 Consolidate conclusion into long-term memory:');
+    lines.push('  → cuba_cronica(action:"add", entity_name:"[topic]", content:"[conclusion]", observation_type:"lesson", source:"agent")');
+  }
+
   if (output.stage.suggestedAction) {
     lines.push(`💡 ${output.stage.suggestedAction}`);
     lines.push('');
