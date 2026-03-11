@@ -165,6 +165,9 @@ impl ThoughtGraph {
                     let child = children[*child_idx];
                     *child_idx += 1;
 
+                    // Clippy suggests Entry API, but this if-else if pattern
+                    // (indices check + on_stack check) doesn't map to Entry cleanly.
+                    #[allow(clippy::map_entry)]
                     if !indices.contains_key(&child) {
                         // Tree edge: descend
                         indices.insert(child, index_counter);

@@ -121,6 +121,11 @@ pub struct ThoughtSession {
     /// V6-3: Depth score history — tracks quality.depth per thought for degradation detection.
     /// When depth drops >50% vs baseline (first 3 thoughts), attention is collapsing.
     pub depth_history: VecDeque<f64>,
+    /// V7-2: Failed thought texts for mode collapse detection.
+    /// When MCTS rejects a thought, its text is stored here.
+    /// New thoughts are compared against these via Jaccard similarity
+    /// to detect paraphrasing of rejected ideas (mode collapse).
+    failed_thoughts: Vec<String>,
 }
 
 impl ThoughtSession {
@@ -141,6 +146,7 @@ impl ThoughtSession {
             first_thought: None,
             thought_snapshots: HashMap::new(),
             depth_history: VecDeque::with_capacity(MAX_THOUGHTS),
+            failed_thoughts: Vec::with_capacity(5),
         }
     }
 
@@ -214,6 +220,9 @@ impl ThoughtSession {
 
             // Clean up stale snapshots
             self.thought_snapshots.retain(|&k, _| k <= target_thought);
+
+            // V7-2: Clear failed thoughts on rollback — fresh start for new branch
+            self.failed_thoughts.clear();
         }
     }
 
@@ -263,6 +272,77 @@ impl ThoughtSession {
         // Only report if degradation exceeds 50%
         if ratio > 0.50 {
             Some(ratio.clamp(0.0, 1.0))
+        } else {
+            None
+        }
+    }
+
+    /// V7-2: Register a thought that was rejected by MCTS.
+    ///
+    /// Stores the text for future mode collapse detection.
+    /// Capped at 5 entries to bound memory.
+    #[allow(dead_code)]
+    pub fn register_failed_thought(&mut self, text: &str) {
+        const MAX_FAILED: usize = 5;
+        if self.failed_thoughts.len() >= MAX_FAILED {
+            self.failed_thoughts.remove(0);
+        }
+        self.failed_thoughts.push(text.to_string());
+    }
+
+    /// V7-2: Detect mode collapse — LLM paraphrasing rejected thoughts.
+    ///
+    /// Computes Jaccard similarity between `new_thought` and each stored
+    /// failed thought. If any similarity exceeds 0.6 (60% shared vocabulary),
+    /// the LLM is likely rewriting the same rejected idea with synonyms.
+    ///
+    /// Returns `Some(max_similarity)` when mode collapse detected, `None` otherwise.
+    ///
+    /// Uses shared_utils::stopwords for consistent tokenization.
+    /// Complexity: O(n·m) where n=failed thoughts, m=terms per thought.
+    #[allow(dead_code)]
+    pub fn is_mode_collapse(&self, new_thought: &str) -> Option<f64> {
+        if self.failed_thoughts.is_empty() {
+            return None;
+        }
+
+        let stopwords = crate::engine::shared_utils::stopwords();
+        let new_terms: std::collections::HashSet<String> = new_thought
+            .split_whitespace()
+            .map(|w| w.chars().filter(|c| c.is_alphanumeric()).collect::<String>().to_lowercase())
+            .filter(|w| w.len() > 2 && !stopwords.contains(w.as_str()))
+            .collect();
+
+        if new_terms.is_empty() {
+            return None;
+        }
+
+        let mut max_similarity = 0.0_f64;
+
+        for failed_text in &self.failed_thoughts {
+            let failed_terms: std::collections::HashSet<String> = failed_text
+                .split_whitespace()
+                .map(|w| w.chars().filter(|c| c.is_alphanumeric()).collect::<String>().to_lowercase())
+                .filter(|w| w.len() > 2 && !stopwords.contains(w.as_str()))
+                .collect();
+
+            if failed_terms.is_empty() {
+                continue;
+            }
+
+            // Jaccard similarity: |A ∩ B| / |A ∪ B|
+            let intersection = new_terms.intersection(&failed_terms).count() as f64;
+            let union = new_terms.union(&failed_terms).count() as f64;
+
+            if union > 0.0 {
+                let sim = intersection / union;
+                max_similarity = max_similarity.max(sim);
+            }
+        }
+
+        // Threshold: >0.6 similarity = mode collapse (paraphrasing)
+        if max_similarity > 0.6 {
+            Some(max_similarity)
         } else {
             None
         }
@@ -650,5 +730,56 @@ mod tests {
         session.record_depth_score(0.01);
         assert!(session.depth_degradation().is_none(),
             "Near-zero baseline should not trigger false positive");
+    }
+
+    // ─── V7-2: Mode Collapse Detection Tests ──────────
+
+    #[test]
+    fn test_no_collapse_without_failures() {
+        let session = ThoughtSession::new("hypothesis", BudgetMode::Balanced);
+        // No failed thoughts registered → always orthogonal
+        assert!(session.is_mode_collapse("any new thought here").is_none(),
+            "Should not detect collapse when no failures registered");
+    }
+
+    #[test]
+    fn test_collapse_detected_exact_clone() {
+        let mut session = ThoughtSession::new("hypothesis", BudgetMode::Balanced);
+        session.register_failed_thought("implement database migration with zero downtime using postgresql");
+        // Exact same text → Jaccard = 1.0 → mode collapse
+        let result = session.is_mode_collapse("implement database migration with zero downtime using postgresql");
+        assert!(result.is_some(), "Should detect mode collapse on exact clone");
+        assert!((result.unwrap() - 1.0).abs() < 0.01, "Exact clone should have ~1.0 similarity");
+    }
+
+    #[test]
+    fn test_collapse_detected_paraphrase() {
+        let mut session = ThoughtSession::new("hypothesis", BudgetMode::Balanced);
+        session.register_failed_thought("implement database migration with zero downtime using postgresql");
+        // Paraphrase with mostly same vocabulary → mode collapse
+        let result = session.is_mode_collapse("database migration implementation for postgresql zero downtime");
+        assert!(result.is_some(), "Should detect mode collapse on paraphrase: {:?}", result);
+    }
+
+    #[test]
+    fn test_orthogonal_thought_passes() {
+        let mut session = ThoughtSession::new("hypothesis", BudgetMode::Balanced);
+        session.register_failed_thought("implement database migration with zero downtime using postgresql");
+        // Completely different topic → orthogonal
+        let result = session.is_mode_collapse("frontend css animation performance tuning with webgl shaders");
+        assert!(result.is_none(),
+            "Orthogonal thought should not trigger collapse: {:?}", result);
+    }
+
+    #[test]
+    fn test_rollback_clears_failures() {
+        let mut session = ThoughtSession::new("hypothesis", BudgetMode::Balanced);
+        session.record_thought("thought zero");
+        session.register_failed_thought("a failed thought");
+        assert!(!session.failed_thoughts.is_empty());
+        // Rollback clears failures for fresh branch
+        session.rollback_to_thought(0);
+        assert!(session.failed_thoughts.is_empty(),
+            "Rollback should clear failed thoughts for fresh exploration");
     }
 }
