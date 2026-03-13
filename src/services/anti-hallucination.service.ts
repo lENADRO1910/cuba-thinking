@@ -37,6 +37,8 @@ const STAGNATION_MIN_COUNT = 3;
 export class AntiHallucinationService {
   private allAssumptions: Array<{ thought: number; text: string }> = [];
   private thoughtTexts = new Map<number, string>();
+  private thoughtTextsLower = new Map<number, string>();
+  private thoughtNegationScores = new Map<number, number>();
 
   
   // B3 fix: renamed _embeddings → embeddings, now used for semantic dedup when available
@@ -79,11 +81,14 @@ export class AntiHallucinationService {
     stage?: ThinkingStage,
   ): Promise<Contradiction[]> {
     this.thoughtTexts.set(thoughtNumber, thought);
+    const currentLower = thought.toLowerCase();
+    const currentNegScore = countNegations(currentLower);
+    this.thoughtTextsLower.set(thoughtNumber, currentLower);
+    this.thoughtNegationScores.set(thoughtNumber, currentNegScore);
+
     if (thoughtNumber <= 1) return [];
 
     const contradictions: Contradiction[] = [];
-    const currentLower = thought.toLowerCase();
-    const currentNegScore = countNegations(currentLower);
     for (const [prevNum, prevText] of this.thoughtTexts.entries()) {
       if (prevNum === thoughtNumber) continue;
       let sim: number;
@@ -112,10 +117,12 @@ export class AntiHallucinationService {
         }
 
         // Fallback: negation polarity check
-        const prevNegScore = countNegations(prevText.toLowerCase());
+        const prevNegScore = this.thoughtNegationScores.get(prevNum) ?? countNegations(prevText.toLowerCase());
+        const prevLower = this.thoughtTextsLower.get(prevNum) ?? prevText.toLowerCase();
+
         // Semantic polarity check
         const polarityDiff = Math.abs(currentNegScore - prevNegScore);
-        if (polarityDiff >= 1 || hasNegationDifference(currentLower, prevText.toLowerCase())) {
+        if (polarityDiff >= 1 || hasNegationDifference(currentLower, prevLower)) {
           contradictions.push({
             thoughtA: prevNum,
             thoughtB: thoughtNumber,
@@ -234,6 +241,8 @@ export class AntiHallucinationService {
   reset(): void {
     this.allAssumptions = [];
     this.thoughtTexts.clear();
+    this.thoughtTextsLower.clear();
+    this.thoughtNegationScores.clear();
   }
 }
 
