@@ -240,6 +240,28 @@ impl ThoughtGraph {
         !self.detect_cycles().is_empty()
     }
 
+    /// V9: Effective depth discounted by Tarjan cycle ratio.
+    ///
+    /// Raw depth from Kahn's algorithm counts all nodes equally.
+    /// Circular reasoning (petitio principii) inflates depth without
+    /// adding genuine reasoning progress. This metric penalizes depth
+    /// proportionally to the fraction of nodes involved in cycles.
+    ///
+    /// Formula: depth_eff = depth_raw × (1 - cycle_nodes / total_nodes)
+    ///
+    /// Based on DoT (Depth of Thought, Zhang et al. 2024).
+    #[allow(dead_code)]
+    pub fn effective_depth(&self) -> f64 {
+        let raw = self.max_depth() as f64;
+        if self.node_count == 0 {
+            return 0.0;
+        }
+        let cycles = self.detect_cycles();
+        let cycle_nodes: usize = cycles.iter().map(|c| c.len()).sum();
+        let penalty = 1.0 - (cycle_nodes as f64 / self.node_count as f64);
+        raw * penalty
+    }
+
     /// Generate topology summary for the formatter.
     pub fn topology_summary(&self) -> TopologySummary {
         let cycles = self.detect_cycles();

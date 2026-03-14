@@ -16,18 +16,34 @@
 //
 // V10: 6-Signal composite (Shannon DPI)
 // V4: Budget-aware α floor (Roberts 1959, Zangari 1994)
+// V9: Softmax Gated Attention (Fin-PRM inspired, Zhou et al. 2025)
+// V9: CUSUM collapse detection (FOCuS-inspired, Ward et al. NeurIPS 2023)
 
 use crate::engine::budget::BudgetMode;
 use serde::Serialize;
 use std::collections::VecDeque;
 
-/// Weights for the 6-signal composite reward.
+/// Prior weights for the 6-signal composite reward (Bayesian priors).
+/// V9: These serve as initialization for the Softmax Gated Attention.
 const W_QUALITY: f64 = 0.40;
 const W_COHERENCE: f64 = 0.20;
 const W_CONTRADICTION: f64 = 0.10;
 const W_FAITHFULNESS: f64 = 0.10;
 const W_INFO_GAIN: f64 = 0.10;
 const W_GROUNDING: f64 = 0.10;
+
+/// V9: Softmax temperature for dynamic attention mechanism.
+/// τ=0.5 balances between winner-take-all (τ→0) and uniform (τ→∞).
+/// At τ=0.5, signals >1σ from mean receive ~2.7× weight boost.
+const SOFTMAX_TAU: f64 = 0.5;
+
+/// V9: CUSUM parameters for cognitive fatigue detection.
+/// μ: target reward quality (optimistic baseline).
+/// k: noise tolerance (slack). Absorbs stochastic fluctuation ≤5%.
+/// h: degradation threshold. Exceeding certifies irreversible collapse.
+const CUSUM_MU: f64 = 0.70;
+const CUSUM_K: f64 = 0.05;
+const CUSUM_H: f64 = 0.15;
 
 /// Individual reward signals for one thought step.
 #[derive(Debug, Clone, Serialize)]
@@ -48,10 +64,17 @@ pub struct RewardSignals {
 
 impl RewardSignals {
     /// Compute composite reward from 6 signals.
+    ///
+    /// V9: Uses Softmax Gated Attention (Fin-PRM inspired, Zhou et al. 2025)
+    /// instead of static weighted sum. Prior weights serve as Bayesian
+    /// initialization. Signals that deviate from the mean receive
+    /// exponentially scaled influence via softmax with τ=0.5.
+    ///
     /// G6: Applies redundancy penalty when info_gain is near-zero
     /// (ROSCOE, Golovneva 2023; ReasonEval 2024).
     pub fn composite(&self) -> f64 {
-        self.composite_inner(W_QUALITY, W_COHERENCE, W_CONTRADICTION, W_FAITHFULNESS, W_INFO_GAIN, W_GROUNDING)
+        let priors = [W_QUALITY, W_COHERENCE, W_CONTRADICTION, W_FAITHFULNESS, W_INFO_GAIN, W_GROUNDING];
+        self.composite_dynamic(&priors, SOFTMAX_TAU)
     }
 
     /// V7 (P3-E): Stage-adaptive composite scoring.
@@ -60,41 +83,69 @@ impl RewardSignals {
     /// breadth of exploration. Late stages (VERIFY/SYNTHESIZE) boost
     /// faithfulness + grounding to reward rigor and evidence.
     ///
+    /// V9: Stage priors modulate the Softmax attention mechanism.
     /// Accepts stage as lowercase string slice for loose coupling.
-    /// Reserved for EwmaTracker::update integration when stage context
-    /// is plumbed through the pipeline.
     #[allow(dead_code)]
     pub fn composite_for_stage(&self, stage: Option<&str>) -> f64 {
-        let (wq, wc, wcr, wf, wi, wg) = match stage {
-            Some("define" | "research") => (
+        let priors = match stage {
+            Some("define" | "research") => [
                 0.45, // +0.05 quality: reward exploration
                 0.20, // coherence unchanged
                 0.10, // contradiction unchanged
                 0.05, // -0.05 faithfulness: less strict early
                 0.15, // +0.05 info_gain: reward novelty
                 0.05, // -0.05 grounding: less strict early
-            ),
-            Some("verify" | "synthesize") => (
+            ],
+            Some("verify" | "synthesize") => [
                 0.30, // -0.10 quality: less weight on breadth
                 0.15, // -0.05 coherence: allow focused jumps
                 0.10, // contradiction unchanged
                 0.20, // +0.10 faithfulness: reward rigor
                 0.05, // -0.05 info_gain: less novelty pressure
                 0.20, // +0.10 grounding: demand evidence
-            ),
-            _ => (W_QUALITY, W_COHERENCE, W_CONTRADICTION, W_FAITHFULNESS, W_INFO_GAIN, W_GROUNDING),
+            ],
+            _ => [W_QUALITY, W_COHERENCE, W_CONTRADICTION, W_FAITHFULNESS, W_INFO_GAIN, W_GROUNDING],
         };
-        self.composite_inner(wq, wc, wcr, wf, wi, wg)
+        self.composite_dynamic(&priors, SOFTMAX_TAU)
     }
 
-    /// Internal composite computation with given weights.
-    fn composite_inner(&self, wq: f64, wc: f64, wcr: f64, wf: f64, wi: f64, wg: f64) -> f64 {
-        let raw = wq * self.quality
-            + wc * self.coherence
-            + wcr * (1.0 - self.contradiction_rate)
-            + wf * self.faithfulness
-            + wi * self.info_gain
-            + wg * self.grounding;
+    /// V9: Softmax Gated Attention composite — dynamic weight allocation.
+    ///
+    /// Algorithm (adapted from Fin-PRM Equation 22, Zhou et al. 2025):
+    ///   1. Compute mean of all 6 signals (centering)
+    ///   2. For each signal: advantage = (signal - mean) / τ
+    ///   3. exp_weight[i] = prior[i] × exp(advantage)
+    ///   4. Normalize via softmax: w[i] = exp_weight[i] / Σ(exp_weights)
+    ///   5. composite = Σ(w[i] × signal[i])
+    ///
+    /// Properties:
+    ///   - Uniform signals → reproduces prior weights exactly
+    ///   - Anomalous signal → dominates composite (exponential scaling)
+    ///   - O(N) where N=6 → < 0.1μs
+    fn composite_dynamic(&self, priors: &[f64; 6], tau: f64) -> f64 {
+        let signals = [
+            self.quality,
+            self.coherence,
+            1.0 - self.contradiction_rate,
+            self.faithfulness,
+            self.info_gain,
+            self.grounding,
+        ];
+        let mean = signals.iter().sum::<f64>() / 6.0;
+
+        let mut exp_weights = [0.0_f64; 6];
+        let mut sum_exp = 0.0_f64;
+        for i in 0..6 {
+            let advantage = (signals[i] - mean) / tau;
+            exp_weights[i] = priors[i] * advantage.exp();
+            sum_exp += exp_weights[i];
+        }
+
+        // Defensive: if all signals identical, sum_exp = Σ(priors) × e^0 = Σ(priors)
+        // Division is well-defined. NaN only if all priors=0 (impossible).
+        let raw: f64 = (0..6)
+            .map(|i| (exp_weights[i] / sum_exp) * signals[i])
+            .sum();
 
         // G6: Continuous exponential redundancy penalty (FIX-4).
         let redundancy_multiplier = (1.0 - (-15.0 * self.info_gain).exp()).max(0.10);
@@ -289,22 +340,40 @@ impl EwmaTracker {
         self.value * 100.0
     }
 
-    /// L3+C4: MACD-based collapse detection — zero phase lag, unbiased.
+    /// V9: One-sided CUSUM collapse detection — instantaneous change-point.
     ///
-    /// v2 used Newton derivatives with phase lag. v3 introduced MACD.
-    /// v4 adds Denis & Roberts (1959) bias correction:
-    ///   unbiased_ema = ema / (1 - (1-α)^t)
+    /// Replaces MACD (v3-v4) which requires 4+ data points and suffers
+    /// from inertial lag. CUSUM detects degradation from step 1.
     ///
-    /// Without unbiasing, a low first value (0.30) anchors ema_slow,
-    /// causing false MACD divergence when quality improves — wrongly
-    /// pruning an improving MCTS branch.
+    /// Lower-sided CUSUM (FOCuS-inspired, Ward et al. NeurIPS 2023):
+    ///   S_t = max(0, S_{t-1} + μ - x_t - k)
+    ///   Alert when S_t > h
     ///
-    /// # Safety (F5)
+    /// Parameters (calibrated per Deep Research 2025):
+    ///   μ = 0.70 — target baseline (optimistic quality expectation)
+    ///   k = 0.05 — noise slack (absorbs stochastic fluctuation ≤5%)
+    ///   h = 0.15 — degradation threshold (irreversible collapse signal)
     ///
-    /// Bias correction denominators `(1 - β^t)` approach 0.0 when t→0.
-    /// Guard `n < 4` ensures t ≥ 4, but EPSILON floor defends against
-    /// future guard relaxation producing NaN via 0/0.
+    /// Complexity: O(N) single pass, no EMA state needed.
     pub fn is_collapsing_kinematically(&self) -> bool {
+        if self.reward_history.len() < 2 {
+            return false;
+        }
+
+        let mut s_t = 0.0_f64;
+        for &r in &self.reward_history {
+            s_t = (s_t + CUSUM_MU - r - CUSUM_K).max(0.0);
+            if s_t > CUSUM_H {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Legacy MACD collapse detection (V3-V4). Retained for reference.
+    /// Superseded by CUSUM (V9) which detects degradation without lag.
+    #[allow(dead_code)]
+    fn is_collapsing_macd_legacy(&self) -> bool {
         let n = self.reward_history.len();
         if n < 4 {
             return false;
@@ -315,17 +384,14 @@ impl EwmaTracker {
         let mut ema_fast = 0.0;
         let mut ema_slow = 0.0;
 
-        // F5: Epsilon for bias correction denominators — prevents NaN if guard changes.
         const BIAS_EPSILON: f64 = 1e-12;
 
         for (t, &r) in vals.iter().enumerate() {
             ema_fast = 0.5 * r + 0.5 * ema_fast;
             ema_slow = 0.2 * r + 0.8 * ema_slow;
 
-            // Only evaluate MACD at the final data point (present)
             if t == n - 1 {
                 let t_f64 = (t + 1) as f64;
-                // Denis & Roberts 1959 bias correction (F5: epsilon floor)
                 let unbiased_fast = ema_fast / (1.0 - 0.5_f64.powf(t_f64)).max(BIAS_EPSILON);
                 let unbiased_slow = ema_slow / (1.0 - 0.8_f64.powf(t_f64)).max(BIAS_EPSILON);
 
@@ -433,17 +499,57 @@ mod tests {
     #[test]
     fn test_fatigue_detection() {
         let mut tracker = EwmaTracker::new(BudgetMode::Balanced);
+        // V9: Use realistic signals that produce decreasing composites
+        // under Softmax. info_gain must be non-zero to avoid redundancy 
+        // penalty collapse (multiplier=0.10).
         for q in [0.8, 0.6, 0.4, 0.2] {
-            let signals = RewardSignals { quality: q, ..Default::default() };
+            let signals = RewardSignals {
+                quality: q, faithfulness: q, coherence: q,
+                contradiction_rate: 1.0 - q, info_gain: q, grounding: q,
+            };
             tracker.update(&signals);
         }
         assert!(tracker.is_fatigued(), "Should detect fatigue with 4 consecutive drops");
     }
 
     #[test]
-    fn test_composite_reward_weights_sum_to_one() {
+    fn test_composite_reward_priors_sum_to_one() {
         let total = W_QUALITY + W_COHERENCE + W_CONTRADICTION + W_FAITHFULNESS + W_INFO_GAIN + W_GROUNDING;
-        assert!((total - 1.0).abs() < 1e-10, "Weights must sum to 1.0: {}", total);
+        assert!((total - 1.0).abs() < 1e-10, "Prior weights must sum to 1.0: {}", total);
+    }
+
+    #[test]
+    fn test_softmax_uniform_signals_reproduce_priors() {
+        // When all signals are identical, softmax reduces to prior weights.
+        let signals = RewardSignals {
+            quality: 0.7, faithfulness: 0.7, coherence: 0.7,
+            contradiction_rate: 0.3, info_gain: 0.7, grounding: 0.7,
+        };
+        let composite = signals.composite();
+        // With uniform signals (all ~0.7), composite should be close to
+        // static weighted sum: 0.7 × Σ(priors) = 0.7
+        // (minus redundancy penalty for info_gain=0.7)
+        let redundancy = (1.0 - (-15.0 * 0.7_f64).exp()).max(0.10);
+        let expected = 0.7 * redundancy;
+        assert!((composite - expected).abs() < 0.05,
+            "Uniform signals should approximate prior-weighted sum: got={:.4} expected≈{:.4}", composite, expected);
+    }
+
+    #[test]
+    fn test_softmax_anomalous_signal_dominates() {
+        // When one signal is anomalously high, it should dominate the composite.
+        let normal = RewardSignals {
+            quality: 0.5, faithfulness: 0.5, coherence: 0.5,
+            contradiction_rate: 0.5, info_gain: 0.5, grounding: 0.5,
+        };
+        let anomalous = RewardSignals {
+            quality: 0.5, faithfulness: 0.5, coherence: 0.5,
+            contradiction_rate: 0.5, info_gain: 0.5, grounding: 0.95,  // Anomalous
+        };
+        // Anomalous should give more weight to grounding → higher composite
+        assert!(anomalous.composite() > normal.composite(),
+            "Anomalous signal should increase composite: anom={:.4} > norm={:.4}",
+            anomalous.composite(), normal.composite());
     }
 
     #[test]
@@ -501,48 +607,74 @@ mod tests {
         assert!(values[3] > 0.98, "Penalty at 30% should be near max");
     }
 
-    // ─── L3: MACD Collapse Tests ────────────────────────
+    // ─── V9: CUSUM Collapse Tests ────────────────────────
     #[test]
-    fn test_kinematic_collapse_accelerating_drops() {
+    fn test_cusum_collapse_accelerating_drops() {
         let mut tracker = EwmaTracker::new(BudgetMode::Balanced);
-        // MACD needs ≥4 data points. Start high, then sharp decline.
-        // Fast EMA (α=0.5) reacts quickly to drops.
-        // Slow EMA (α=0.2) holds near high values.
-        // → MACD = fast - slow < -0.08
+        // CUSUM detects collapse earlier than MACD (no 4-point minimum).
+        // Each step below μ=0.70 accumulates: S += 0.70 - r - 0.05
+        // r=0.90 → S = max(0, 0+0.70-0.90-0.05) = 0.0 (above target)
+        // r=0.50 → S = max(0, 0+0.70-0.50-0.05) = 0.15 (at threshold)
+        // r=0.20 → S = max(0, 0.15+0.70-0.20-0.05) = 0.60 (well above h=0.15)
         tracker.reward_history.push_back(0.90);
-        tracker.reward_history.push_back(0.85);
         tracker.reward_history.push_back(0.50);
         tracker.reward_history.push_back(0.20);
         assert!(
             tracker.is_collapsing_kinematically(),
-            "Sharp decline should trigger MACD divergence"
+            "Sharp decline should trigger CUSUM collapse"
         );
     }
 
     #[test]
-    fn test_kinematic_collapse_stable_sequence() {
+    fn test_cusum_collapse_stable_sequence() {
         let mut tracker = EwmaTracker::new(BudgetMode::Balanced);
-        // Stable: fast and slow EMA converge → MACD ≈ 0
+        // Stable around μ=0.70: deviation absorbed by slack k=0.05
         tracker.reward_history.push_back(0.70);
         tracker.reward_history.push_back(0.72);
         tracker.reward_history.push_back(0.71);
         tracker.reward_history.push_back(0.70);
         assert!(
             !tracker.is_collapsing_kinematically(),
-            "Stable sequence should NOT trigger MACD divergence"
+            "Stable sequence should NOT trigger CUSUM collapse"
         );
     }
 
     #[test]
-    fn test_kinematic_collapse_insufficient_data() {
+    fn test_cusum_collapse_insufficient_data() {
         let mut tracker = EwmaTracker::new(BudgetMode::Balanced);
-        // Only 3 data points — MACD needs ≥4
+        // Only 1 data point — CUSUM needs ≥2
         tracker.reward_history.push_back(0.80);
-        tracker.reward_history.push_back(0.60);
-        tracker.reward_history.push_back(0.40);
         assert!(
             !tracker.is_collapsing_kinematically(),
-            "Fewer than 4 data points should safely return false"
+            "Fewer than 2 data points should safely return false"
+        );
+    }
+
+    #[test]
+    fn test_cusum_early_detection() {
+        let mut tracker = EwmaTracker::new(BudgetMode::Balanced);
+        // CUSUM advantage: detects collapse at step 2 (r=0.40)
+        // S1 = max(0, 0+0.70-0.40-0.05) = 0.25 > h=0.15 → DETECTED!
+        // MACD would need 4+ points to even start calculating.
+        tracker.reward_history.push_back(0.40);
+        tracker.reward_history.push_back(0.40);
+        assert!(
+            tracker.is_collapsing_kinematically(),
+            "CUSUM should detect collapse earlier than MACD"
+        );
+    }
+
+    #[test]
+    fn test_cusum_gradual_recovery() {
+        let mut tracker = EwmaTracker::new(BudgetMode::Balanced);
+        // Dip then recovery: CUSUM resets on good values
+        tracker.reward_history.push_back(0.75);
+        tracker.reward_history.push_back(0.65);
+        tracker.reward_history.push_back(0.75);
+        tracker.reward_history.push_back(0.80);
+        assert!(
+            !tracker.is_collapsing_kinematically(),
+            "Recovery should prevent CUSUM from triggering"
         );
     }
 

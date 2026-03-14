@@ -216,7 +216,12 @@ fn compute_clarity(text: &str) -> f64 {
     }
 
     let unique: HashSet<&str> = words.iter().copied().collect();
-    let ttr = unique.len() as f64 / words.len() as f64;
+    // V9: Root-TTR normalization — TTR = unique / √total.
+    // Standard TTR (unique/total) decays exponentially for longer texts
+    // (Tweedie & Baayen, 1998). Root-TTR normalizes this decay.
+    // Short texts get amplified (4 unique/√4 = 2.0), but the final
+    // weighted .min(1.0) clamp at L238 handles this safely.
+    let ttr = unique.len() as f64 / (words.len() as f64).sqrt();
 
     // Also check sentence diversity (unique sentence patterns)
     let sentences: Vec<&str> = text
@@ -601,12 +606,12 @@ mod tests {
             relevance: 0.7,
             actionability: 0.3,
         };
-        // DEFINE boosts clarity 3x → [3, 1, 1, 1, 1, 1] = total_weight 8
-        // weighted = (0.8*3 + 0.5 + 0.4 + 0.6 + 0.7 + 0.3) / 8 = 4.9/8 = 0.6125
+        // V9: DEFINE boosts clarity 2x → [2, 1, 1, 1, 1, 1] = total_weight 7
+        // weighted = (0.8*2 + 0.5 + 0.4 + 0.6 + 0.7 + 0.3) / 7 = 4.1/7 ≈ 0.5857
         let wm = scores.weighted_mean(CognitiveStage::Define);
         assert!(
-            (wm - 0.6125).abs() < 0.01,
-            "Expected ~0.6125, got {:.4}",
+            (wm - 0.5857).abs() < 0.01,
+            "Expected ~0.5857, got {:.4}",
             wm
         );
     }

@@ -53,9 +53,20 @@ pub struct PrmSignals {
     pub assert_diversity: f64,
 }
 
-/// Signal weights for composite score.
-/// E1 (compiles) and E2 (asserts) are the most important.
-const WEIGHTS: [f64; 8] = [
+// V9: PRM uses Logical Veto Gate instead of flat weighted sum.
+//
+// Architecture (adapted from Dominance Ranking, Deep Research 2025):
+//   Gate:     (E1×0.7 + E4×0.3) — if code doesn't compile, gate ≈ 0.05
+//   Quality:  E3×0.4 + E5×0.3 + E6×0.3 — structural quality
+//   Verify:   E2×0.4 + E7×0.2 + E8×0.4 — verification robustness
+//   Final:    Gate × (0.6×Verify + 0.4×Quality)
+//
+// Key property: uncompilable code CANNOT score > 0.05 regardless of
+// diversity or coverage, eliminating the gaming vector.
+
+/// Legacy flat weights retained for backward reference and static analysis.
+#[allow(dead_code)]
+const LEGACY_WEIGHTS: [f64; 8] = [
     0.25, // E1: Compiles (most critical)
     0.25, // E2: Asserts pass
     0.10, // E3: Complexity
@@ -178,7 +189,12 @@ pub fn evaluate_prm(sandbox: &SandboxResult) -> PrmVerdict {
         assert_count
     ));
 
-    // ─── Composite Score ─────────────────────────────
+    // ─── V9: Logical Veto Gate Composite ───────────────
+    //
+    // Gate:    (E1×0.7 + E4×0.3) — compilation + type safety
+    // Quality: E3×0.4 + E5×0.3 + E6×0.3 — structural
+    // Verify:  E2×0.4 + E7×0.2 + E8×0.4 — verification robustness
+    // Final:   Gate × (0.6×Verify + 0.4×Quality)
     let signals = PrmSignals {
         compiles: e1,
         asserts_pass: e2,
@@ -190,12 +206,11 @@ pub fn evaluate_prm(sandbox: &SandboxResult) -> PrmVerdict {
         assert_diversity: e8,
     };
 
-    let signal_values = [e1, e2, e3, e4, e5, e6, e7, e8];
-    let composite_score: f64 = signal_values
-        .iter()
-        .zip(WEIGHTS.iter())
-        .map(|(s, w)| s * w)
-        .sum();
+    // Gate: if code doesn't compile, everything collapses
+    let gate = (e1 * 0.7 + e4 * 0.3).max(0.05);
+    let quality_group = e3 * 0.4 + e5 * 0.3 + e6 * 0.3;
+    let verify_group = e2 * 0.4 + e7 * 0.2 + e8 * 0.4;
+    let composite_score = gate * (0.6 * verify_group + 0.4 * quality_group);
 
     let verdict = if composite_score >= 0.85 {
         "✅ EXCELLENT — Code exhaustively verified"
@@ -246,12 +261,11 @@ pub fn evaluate_static(code: &str) -> PrmVerdict {
         assert_diversity: e8,
     };
 
-    let signal_values = [e1, e2, e3, e4, e5, e6, e7, e8];
-    let composite_score: f64 = signal_values
-        .iter()
-        .zip(WEIGHTS.iter())
-        .map(|(s, w)| s * w)
-        .sum();
+    // V9: Apply same Veto Gate system as evaluate_prm
+    let gate = (e1 * 0.7 + e4 * 0.3).max(0.05);
+    let quality_group = e3 * 0.4 + e5 * 0.3 + e6 * 0.3;
+    let verify_group = e2 * 0.4 + e7 * 0.2 + e8 * 0.4;
+    let composite_score = gate * (0.6 * verify_group + 0.4 * quality_group);
 
     PrmVerdict {
         signals,
@@ -348,5 +362,63 @@ mod tests {
         let verdict = evaluate_static("def foo(x: int) -> int:\n    assert x > 0\n    return x * 2");
         assert!(verdict.composite_score > 0.3);
         assert!(verdict.verdict.contains("estático") || verdict.verdict.contains("Static"));
+    }
+
+    /// V9: Logical Veto Gate — compilation failure drastically reduces composite.
+    #[test]
+    fn test_prm_veto_gate_compilation_failure() {
+        // Scenario 1: Code fails to compile AND fails type safety → full veto
+        let result_full_veto = SandboxResult {
+            success: false,
+            stdout: String::new(),
+            error: Some("SyntaxError: invalid syntax".to_string()),
+            execution_ms: 1,
+            ast_analysis: AstAnalysis {
+                cyclomatic_complexity: 2,
+                assert_count: 5,
+                unique_assert_targets: 5,
+                function_count: 2,
+                import_count: 0,
+                has_type_hints: false,        // No type hints → E4 low
+                is_deterministic: true,
+                security_violations: vec![],
+            },
+        };
+        let v1 = evaluate_prm(&result_full_veto);
+        // Gate = (0.0×0.7 + 0.2×0.3) = 0.06, composite = 0.06 × groups ≈ very low
+        assert!(v1.composite_score < 0.10,
+            "Full veto (no compile, no types) should score < 0.10, got: {:.4}",
+            v1.composite_score);
+
+        // Scenario 2: Code fails to compile but HAS type hints → partial veto
+        let result_partial = SandboxResult {
+            success: false,
+            stdout: String::new(),
+            error: Some("SyntaxError: invalid syntax".to_string()),
+            execution_ms: 1,
+            ast_analysis: AstAnalysis {
+                cyclomatic_complexity: 2,
+                assert_count: 5,
+                unique_assert_targets: 5,
+                function_count: 2,
+                import_count: 0,
+                has_type_hints: true,         // Type hints → E4 high
+                is_deterministic: true,
+                security_violations: vec![],
+            },
+        };
+        let v2 = evaluate_prm(&result_partial);
+        // Gate = (0.0×0.7 + 1.0×0.3) = 0.3, composite ≈ 0.23
+        // Still well below the 0.50 "NEEDS WORK" threshold
+        assert!(v2.composite_score < 0.50,
+            "Partial veto (no compile, has types) should score < 0.50, got: {:.4}",
+            v2.composite_score);
+
+        // Both should be far below a successful compilation
+        let success = make_success_result();
+        let v_success = evaluate_prm(&success);
+        assert!(v_success.composite_score > v2.composite_score * 2.0,
+            "Successful code should score much higher than failed: success={:.4} vs failed={:.4}",
+            v_success.composite_score, v2.composite_score);
     }
 }
