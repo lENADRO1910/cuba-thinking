@@ -320,16 +320,22 @@ except AttributeError:
 # NOTE: builtins.eval/exec/compile are NOT blocked here — they are already caught
 # by the AST scanner, and blocking builtins.compile kills py.run_bound() (the sandbox itself).
 # sys.addaudithook is PERMANENT and process-wide — focus only on OS-level escapes.
-def _security_audit_hook(event, args):
-    _BLOCKED_EVENTS = {{'os.system', 'os.exec', 'os.posix_spawn', 'os.spawn',
-                        'subprocess.Popen', 'shutil.rmtree', 'socket.connect',
-                        'webbrowser.open'}}
-    if event in _BLOCKED_EVENTS:
-        raise RuntimeError(f"SECURITY_AUDIT: Kernel call blocked: {{event}}")
-try:
-    sys.addaudithook(_security_audit_hook)
-except AttributeError:
-    pass  # Python < 3.8
+#
+# FIX-2: Idempotency guard — without this, every sandbox execution adds ANOTHER
+# hook instance. After N calls, N hooks fire per CPython event → O(N) overhead.
+# At N=1000 × 50k gas lines × 0.1μs/hook ≈ 5s, exceeding the sandbox timeout.
+if not hasattr(sys, '_cuba_audit_hook_installed'):
+    def _security_audit_hook(event, args):
+        _BLOCKED_EVENTS = {{'os.system', 'os.exec', 'os.posix_spawn', 'os.spawn',
+                            'subprocess.Popen', 'shutil.rmtree', 'socket.connect',
+                            'webbrowser.open'}}
+        if event in _BLOCKED_EVENTS:
+            raise RuntimeError(f"SECURITY_AUDIT: Kernel call blocked: {{event}}")
+    try:
+        sys.addaudithook(_security_audit_hook)
+        sys._cuba_audit_hook_installed = True
+    except AttributeError:
+        pass  # Python < 3.8
 
 # V5-2b: ReDoS Guard — monkey-patch re.compile to block catastrophic backtracking.
 # re.match(r"(a+)+b", "a"*10000) executes in C — line tracer never fires.
@@ -400,8 +406,13 @@ sys.settrace(_gas_tracer)
             .eval_bound("_captured_stdout.getvalue()", Some(&globals), None)
             .and_then(|v| v.extract::<String>())
             .unwrap_or_default();
+        // FIX-1: UTF-8 safe truncation — &stdout[..N] panics if N falls
+        // inside a multi-byte codepoint (e.g. 'é' = 2 bytes in UTF-8).
+        // floor_char_boundary() finds the largest valid char boundary ≤ N.
+        // Stable since Rust 1.82.
         let stdout = if stdout.len() > MAX_STDOUT_BYTES {
-            format!("{}...[truncated]", &stdout[..MAX_STDOUT_BYTES])
+            let safe_end = stdout.floor_char_boundary(MAX_STDOUT_BYTES);
+            format!("{}...[truncated]", &stdout[..safe_end])
         } else {
             stdout
         };
