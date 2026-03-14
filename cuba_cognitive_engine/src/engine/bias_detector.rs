@@ -47,41 +47,88 @@ impl BiasType {
 
 /// Analyze thought text for cognitive biases.
 /// Returns detected biases with confidence scores and actionable suggestions.
+///
+/// Refactored: each bias type is a standalone checker (CC=1-2).
+/// detect_biases CC: ~4 (agent-reported match + extend).
 pub fn detect_biases(
     thought: &str,
     thought_number: usize,
     previous_thoughts: &[&str],
     agent_reported_bias: Option<&str>,
 ) -> Vec<DetectedBias> {
-    let mut biases = Vec::new();
     let lower = thought.to_lowercase();
 
-    // ─── 1. Anchoring Bias ───────────────────────────────────────
-    // Early thoughts that fixate on a single solution without exploring
-    if thought_number <= 2 {
-        let solution_markers = [
-            "the answer is", "we should", "the solution is",
-            "obviously", "clearly", "la respuesta es", "debemos",
-            "la solución es", "obviamente", "claramente",
-        ];
-        let is_premature = solution_markers.iter().any(|m| lower.contains(m));
-        let no_alternatives = !lower.contains("alternative")
-            && !lower.contains("option")
-            && !lower.contains("alternativa")
-            && !lower.contains("opción");
+    // Collect all detected biases from individual checkers
+    let mut biases: Vec<DetectedBias> = [
+        check_anchoring_bias(&lower, thought_number),
+        check_confirmation_bias(&lower, thought_number),
+        check_availability_bias(&lower),
+        check_sunk_cost_bias(&lower),
+        check_bandwagon_bias(&lower),
+        check_repetition_bias(&lower, previous_thoughts),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
 
-        if is_premature && no_alternatives {
-            biases.push(DetectedBias {
-                bias_type: BiasType::Anchoring,
-                confidence: 0.7,
-                explanation: "Proposing a solution in early thoughts without exploring alternatives",
-                suggestion: "Consider at least 2-3 alternative approaches before committing",
-            });
+    // ─── Agent-Reported Bias ─────────────────────────────────────
+    if let Some(reported) = agent_reported_bias {
+        let bias_type = match reported.to_lowercase().as_str() {
+            "anchoring" => Some(BiasType::Anchoring),
+            "confirmation" => Some(BiasType::Confirmation),
+            "availability" => Some(BiasType::Availability),
+            "sunk_cost" | "sunkcost" => Some(BiasType::SunkCost),
+            "bandwagon" => Some(BiasType::Bandwagon),
+            _ => None,
+        };
+        if let Some(bt) = bias_type {
+            if !biases.iter().any(|b| b.bias_type == bt) {
+                biases.push(DetectedBias {
+                    bias_type: bt,
+                    confidence: 0.9,
+                    explanation: "Self-reported by the agent during reasoning",
+                    suggestion: "Agent acknowledged this bias — take corrective action",
+                });
+            }
         }
     }
 
-    // ─── 2. Confirmation Bias ────────────────────────────────────
-    // Only supporting evidence, no counter-arguments
+    biases
+}
+
+// ─── Bias Checker Helpers (CC=1-2 each) ──────────────────────────
+
+/// Anchoring: early fixation on a single solution without exploring alternatives.
+fn check_anchoring_bias(lower: &str, thought_number: usize) -> Option<DetectedBias> {
+    if thought_number > 2 {
+        return None;
+    }
+
+    let solution_markers = [
+        "the answer is", "we should", "the solution is",
+        "obviously", "clearly", "la respuesta es", "debemos",
+        "la solución es", "obviamente", "claramente",
+    ];
+    let is_premature = solution_markers.iter().any(|m| lower.contains(m));
+    let no_alternatives = !lower.contains("alternative")
+        && !lower.contains("option")
+        && !lower.contains("alternativa")
+        && !lower.contains("opción");
+
+    if is_premature && no_alternatives {
+        Some(DetectedBias {
+            bias_type: BiasType::Anchoring,
+            confidence: 0.7,
+            explanation: "Proposing a solution in early thoughts without exploring alternatives",
+            suggestion: "Consider at least 2-3 alternative approaches before committing",
+        })
+    } else {
+        None
+    }
+}
+
+/// Confirmation: only supporting evidence, no counter-arguments.
+fn check_confirmation_bias(lower: &str, thought_number: usize) -> Option<DetectedBias> {
     let support_markers = [
         "confirms", "supports", "proves", "validates", "agrees with",
         "confirma", "soporta", "prueba", "valida", "coincide",
@@ -97,16 +144,19 @@ pub fn detect_biases(
     let has_counter = counter_markers.iter().any(|m| lower.contains(m));
 
     if has_support && !has_counter && thought_number > 3 {
-        biases.push(DetectedBias {
+        Some(DetectedBias {
             bias_type: BiasType::Confirmation,
             confidence: 0.6,
             explanation: "Only supporting evidence found, no counter-arguments considered",
             suggestion: "Actively seek disconfirming evidence or opposing viewpoints",
-        });
+        })
+    } else {
+        None
     }
+}
 
-    // ─── 3. Availability Bias ────────────────────────────────────
-    // Over-reliance on recent/familiar examples
+/// Availability: over-reliance on anecdotal/recalled examples.
+fn check_availability_bias(lower: &str) -> Option<DetectedBias> {
     let anecdotal_markers = [
         "i've seen", "in my experience", "usually", "typically",
         "everyone knows", "common knowledge", "obviously",
@@ -117,17 +167,21 @@ pub fn detect_biases(
         .iter()
         .filter(|m| lower.contains(**m))
         .count();
+
     if anecdotal_count >= 2 {
-        biases.push(DetectedBias {
+        Some(DetectedBias {
             bias_type: BiasType::Availability,
             confidence: 0.5,
             explanation: "Reasoning relies heavily on anecdotal/recalled examples rather than data",
             suggestion: "Ground claims with specific data, measurements, or verified sources",
-        });
+        })
+    } else {
+        None
     }
+}
 
-    // ─── 4. Sunk Cost Bias ───────────────────────────────────────
-    // Continuing with a failing approach because of prior investment
+/// Sunk cost: continuing with a failing approach due to prior investment.
+fn check_sunk_cost_bias(lower: &str) -> Option<DetectedBias> {
     let sunk_cost_markers = [
         "already invested", "too far to stop", "we've spent",
         "can't abandon", "committed to", "already built",
@@ -135,16 +189,19 @@ pub fn detect_biases(
         "no podemos abandonar", "comprometidos con",
     ];
     if sunk_cost_markers.iter().any(|m| lower.contains(m)) {
-        biases.push(DetectedBias {
+        Some(DetectedBias {
             bias_type: BiasType::SunkCost,
             confidence: 0.8,
             explanation: "Decision influenced by prior investment rather than future value",
             suggestion: "Evaluate the decision based solely on future costs and benefits",
-        });
+        })
+    } else {
+        None
     }
+}
 
-    // ─── 5. Bandwagon Bias ───────────────────────────────────────
-    // Following popular opinion without independent analysis
+/// Bandwagon: citing popularity without justification.
+fn check_bandwagon_bias(lower: &str) -> Option<DetectedBias> {
     let bandwagon_markers = [
         "everyone uses", "industry standard", "most popular",
         "best practice", "widely adopted", "trending",
@@ -158,69 +215,51 @@ pub fn detect_biases(
         && !lower.contains("debido a");
 
     if bandwagon_markers.iter().any(|m| lower.contains(m)) && no_justification {
-        biases.push(DetectedBias {
+        Some(DetectedBias {
             bias_type: BiasType::Bandwagon,
             confidence: 0.5,
             explanation: "Citing popularity without justifying why it fits this specific case",
             suggestion: "Explain WHY the popular choice is appropriate for THIS specific context",
-        });
+        })
+    } else {
+        None
+    }
+}
+
+/// Repetition anchoring: structural repetition across previous thoughts.
+fn check_repetition_bias(lower: &str, previous_thoughts: &[&str]) -> Option<DetectedBias> {
+    if previous_thoughts.len() < 3 {
+        return None;
     }
 
-    // ─── Agent-Reported Bias ─────────────────────────────────────
-    if let Some(reported) = agent_reported_bias {
-        let bias_type = match reported.to_lowercase().as_str() {
-            "anchoring" => Some(BiasType::Anchoring),
-            "confirmation" => Some(BiasType::Confirmation),
-            "availability" => Some(BiasType::Availability),
-            "sunk_cost" | "sunkcost" => Some(BiasType::SunkCost),
-            "bandwagon" => Some(BiasType::Bandwagon),
-            _ => None,
-        };
-        if let Some(bt) = bias_type {
-            // Only add if not already detected
-            if !biases.iter().any(|b| b.bias_type == bt) {
-                biases.push(DetectedBias {
-                    bias_type: bt,
-                    confidence: 0.9, // High confidence — agent self-reported
-                    explanation: "Self-reported by the agent during reasoning",
-                    suggestion: "Agent acknowledged this bias — take corrective action",
-                });
-            }
-        }
+    let current_words: Vec<&str> = lower.split_whitespace().take(10).collect();
+    let similar_starts = previous_thoughts
+        .iter()
+        .filter(|prev| {
+            let prev_lower = prev.to_lowercase();
+            let prev_words: Vec<&str> = prev_lower
+                .split_whitespace()
+                .take(10)
+                .collect::<Vec<_>>();
+            let matching = current_words
+                .iter()
+                .zip(prev_words.iter())
+                .filter(|(a, b)| a == b)
+                .count();
+            matching as f64 / current_words.len().max(1) as f64 > 0.6
+        })
+        .count();
+
+    if similar_starts >= 2 {
+        Some(DetectedBias {
+            bias_type: BiasType::Anchoring,
+            confidence: 0.6,
+            explanation: "Thought pattern is repeating — may be stuck in a reasoning loop",
+            suggestion: "Try a fundamentally different approach or perspective",
+        })
+    } else {
+        None
     }
-
-    // ─── Repetition Bias (from history) ──────────────────────────
-    // Check if current thought repeats structure from previous thoughts
-    if previous_thoughts.len() >= 3 {
-        let current_words: Vec<&str> = lower.split_whitespace().take(10).collect();
-        let similar_starts = previous_thoughts
-            .iter()
-            .filter(|prev| {
-                let prev_lower = prev.to_lowercase();
-                let prev_words: Vec<&str> = prev_lower
-                    .split_whitespace()
-                    .take(10)
-                    .collect::<Vec<_>>();
-                let matching = current_words
-                    .iter()
-                    .zip(prev_words.iter())
-                    .filter(|(a, b)| a == b)
-                    .count();
-                matching as f64 / current_words.len().max(1) as f64 > 0.6
-            })
-            .count();
-
-        if similar_starts >= 2 {
-            biases.push(DetectedBias {
-                bias_type: BiasType::Anchoring,
-                confidence: 0.6,
-                explanation: "Thought pattern is repeating — may be stuck in a reasoning loop",
-                suggestion: "Try a fundamentally different approach or perspective",
-            });
-        }
-    }
-
-    biases
 }
 
 #[cfg(test)]
