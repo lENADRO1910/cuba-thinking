@@ -1,8 +1,8 @@
 # 🧠 Cuba-Thinking
 
-**Advanced cognitive reasoning engine for AI agents** — A Model Context Protocol (MCP) server that enhances AI reasoning with a 6-stage cognitive pipeline, 9-layer anti-hallucination, MCTS quality enforcement, Process Reward Model (PRM), bias detection, metacognitive analysis, persistent thought sessions, Graph-of-Thought topology, mode collapse detection, and cross-MCP memory symbiosis.
+**Advanced cognitive reasoning engine for AI agents** — A Model Context Protocol (MCP) server that enhances AI reasoning with a 6-stage cognitive pipeline, 9-layer anti-hallucination, MCTS quality enforcement, 8-signal Process Reward Model (PRM), bias detection, metacognitive analysis, persistent thought sessions, Graph-of-Thought topology with Kahn's DP longest path, mode collapse detection, stage-adaptive reward scoring, and cross-MCP memory symbiosis.
 
-3 tools. Zero cloud dependencies. 170 tests. 7 audit rounds. Mathematically verified.
+3 tools. Zero cloud dependencies. 178 tests. 8 audit rounds. 15 magic constants formally verified.
 
 ---
 
@@ -11,20 +11,20 @@
 AI agents think in flat, unstructured sequences. Cuba-Thinking gives them:
 
 - **6-stage cognitive engine** — Bloom's Taxonomy state machine: DEFINE → RESEARCH → ANALYZE → HYPOTHESIZE → VERIFY → SYNTHESIZE
-- **9-layer anti-hallucination** — Assumption tracking, confidence calibration, CoVe structure, evidence accumulation, claim grounding (per-claim proximity), EWMA threshold enforcement, contradiction detection, warmup guard, anti-overthinking
+- **9-layer anti-hallucination** — Assumption tracking, confidence calibration, CoVe structure with verification question detection (V7), evidence accumulation, claim grounding (per-claim proximity), EWMA threshold enforcement, contradiction detection, warmup guard, anti-overthinking
 - **6D quality metrics** — Clarity (TTR), Depth (clause counting), Breadth (noun diversity), Logic (connective density), Relevance (TF-IDF cosine), Actionability (imperative + specificity)
-- **Process Reward Model (PRM)** — 7-signal code evaluation: Compiles, Asserts Pass, Complexity, Type Safety, Safe Imports, Determinism, Coverage
+- **Process Reward Model (PRM)** — 8-signal code evaluation: Compiles, Asserts Pass, Complexity, Type Safety, Safe Imports, Determinism, Coverage, Assertion Diversity (V7)
 - **Sandboxed execution** — PyO3 sandbox with PEP 578 audit hooks, ReDoS guard, Z3 vacuous truth detector, and AST-level import blocking
 - **MCTS forced backtracking** — Protocol-level rejection (`isError: true`) when EWMA drops below budget-aware threshold, with hedged rejection zones
-- **Graph-of-Thought (GoT)** — DAG topology tracking with Tarjan SCC cycle detection O(V+E) for circular reasoning (petitio principii)
+- **Graph-of-Thought (GoT)** — DAG topology with Kahn's topological sort + DP for correct longest-path depth (V7), Tarjan SCC cycle detection O(V+E) for circular reasoning (petitio principii)
 - **Persistent thought sessions** — Cross-call state accumulation: EWMA, novelty, graph, confidence oscillation, depth degradation, root-anchoring, hypothesis drift
 - **Epistemological rollback** — Snapshot/rollback of session state when MCTS rejects a thought, preventing hallucinated premises from poisoning future reasoning
 - **Mode collapse detection (V7)** — OrthogonalityGuard: Jaccard similarity against failed thoughts detects when LLM paraphrases rejected ideas instead of generating genuinely new hypotheses
-- **Bias detection** — Identifies 5 cognitive biases (Anchoring, Confirmation, Availability, Sunk Cost, Bandwagon)
+- **Bias detection** — Identifies 5 cognitive biases (Anchoring, Confirmation, Availability, Sunk Cost, Bandwagon) with Jaccard bag-of-words repetition loop detection (V7)
 - **Metacognitive analysis** — Filler ratio, content-word ratio, claim density, fallacy detection, dialectical reasoning checks
 - **Corrective directives** — Actionable improvement suggestions targeting weak quality dimensions
 - **Cross-MCP memory symbiosis** — Bridge to [cuba-memorys](https://github.com/LeandroPG19/cuba-memorys) for recall/consolidation
-- **EWMA reward tracking** — 6-signal composite with adaptive α floor, MACD collapse prediction, Process Advantage Verifier (PAV), and stagnation/fatigue detection
+- **EWMA reward tracking** — 6-signal composite with adaptive α floor, stage-adaptive weight profiles (V7), MACD collapse prediction, Process Advantage Verifier (PAV), and stagnation/fatigue detection
 - **Contradiction detection** — Direct negation, antonym pairs, quantifier conflicts with sentence context
 - **Novelty tracking** — Information gain per thought step via Jaccard distance on TF vectors
 - **Depth degradation** — Tracks quality.depth history per thought, detects >50% drop vs baseline (KV cache saturation proxy)
@@ -98,7 +98,7 @@ The core cognitive engine. Evaluates each thought step through the full analysis
 
 ### 2. `verify_code` — Process Reward Model (PRM)
 
-Executes Python code in a sandboxed environment and evaluates 7 quality signals.
+Executes Python code in a sandboxed environment and evaluates 8 quality signals.
 
 **Parameters:**
 
@@ -106,17 +106,18 @@ Executes Python code in a sandboxed environment and evaluates 7 quality signals.
 |-----------|------|-------------|
 | `code` | string | Python code to verify (asserts, functions, computations) |
 
-**7 PRM Signals:**
+**8 PRM Signals:**
 
 | Signal | Weight | Scoring |
 |--------|:------:|---------|
-| E1 Compiles | 0.30 | 1.0 if execution succeeds, 0.0 otherwise |
+| E1 Compiles | 0.25 | 1.0 if execution succeeds, 0.0 otherwise |
 | E2 Asserts Pass | 0.25 | 1.0 with passing asserts, 0.3 without asserts, 0.0 on failure |
 | E3 Complexity | 0.10 | 1.0 if CC ≤ 7, 0.7 if CC ≤ 10, 0.0 otherwise |
-| E4 Type Safety | 0.10 | 1.0 with type annotations, 0.3 without |
+| E4 Type Safety | 0.08 | 1.0 with type annotations, 0.3 without |
 | E5 Safe Imports | 0.05 | 1.0 clean, 0.0 with security violations |
 | E6 Determinism | 0.10 | 1.0 reproducible, 0.5 with random/time |
-| E7 Coverage | 0.10 | assert-to-function ratio |
+| E7 Coverage | 0.07 | assert-to-function ratio |
+| E8 Diversity | 0.10 | unique assert targets / total asserts (V7, anti-gaming) |
 
 **Verdicts:** EXCELLENT (≥85%), GOOD (≥65%), ACCEPTABLE (≥45%), INSUFFICIENT (<45%)
 
@@ -161,7 +162,7 @@ Zero LLM calls. All verification runs locally:
 |:-:|-------|--------|
 | 1 | **Assumption Tracking** | Dedup across all thoughts |
 | 2 | **Confidence Calibration** | Per-stage expected ranges, delta tracking |
-| 3 | **Chain-of-Verification (CoVe)** | Self-verification patterns (Dhuliawala et al., 2023) |
+| 3 | **Chain-of-Verification (CoVe)** | Self-verification keywords + question detection (Dhuliawala et al., 2023; ACL 2024). Progressive threshold: 1 marker (thoughts 3–4), 2+ markers (thoughts 5+) |
 | 4 | **Evidence Accumulation** | Flags unsupported confidence increases (Wald, 1945) |
 | 5 | **Claim Counter** | Verifiable assertions per sentence |
 | 6 | **Source Grounding** | Per-claim proximity check — evidence in ±1 adjacent sentences |
@@ -197,14 +198,19 @@ Budget thresholds (UCB1 — Kocsis & Szepesvári, 2006):
 
 ## EWMA Step Reward — Roberts (1959)
 
-6-signal composite with adaptive α floor:
+6-signal composite with adaptive α floor and stage-adaptive weight profiles (V7):
 
 ```text
 EWMA_t = α · reward_t + (1 - α) · EWMA_{t-1}
 α = max(2/(n+1), α_floor)    — budget-aware floor
 
-reward = 0.40·quality + 0.20·faithfulness + 0.10·coherence
-       + 0.10·(1 - contradiction_rate) + 0.10·info_gain + 0.10·grounding
+Default weights:
+reward = 0.40·quality + 0.20·coherence + 0.10·(1-contradiction)
+       + 0.10·faithfulness + 0.10·info_gain + 0.10·grounding
+
+Stage-adaptive (V7):
+  DEFINE/RESEARCH:   quality↑ 0.45, info_gain↑ 0.15, faithfulness↓ 0.05
+  VERIFY/SYNTHESIZE:  faithfulness↑ 0.20, grounding↑ 0.20, quality↓ 0.30
 ```
 
 - **Reward history**: Capped at 20 entries (VecDeque ring buffer)
@@ -223,6 +229,7 @@ DAG topology tracking across reasoning chains with cycle detection:
 - **Edges**: Sequential and revision dependencies
 - **Convergence**: Multiple paths merging (in-degree > 1)
 - **Revisions**: Explicit thought revision tracking
+- **Longest path (V7)**: Kahn's topological sort + dynamic programming — correctly computes DAG longest path even with convergence (replaces BFS which skipped longer paths to already-visited nodes)
 - **Cycle detection**: Tarjan's SCC algorithm O(V+E) detects circular reasoning (petitio principii: "X because Y" + "Y because X")
 - **TopologySummary**: Nodes, edges, depth, convergence, revisions, orphans, cycle_count
 
@@ -344,7 +351,7 @@ cuba-thinking/
             ├── anti_hallucination.rs         # 9-layer trust verification
             ├── bias_detector.rs             # 5 cognitive bias detectors
             ├── metacognition.rs             # Filler, CWR, fallacies, dialectics
-            ├── thought_graph.rs             # GoT DAG + Tarjan SCC cycle detection (V6)
+            ├── thought_graph.rs             # GoT DAG + Kahn DP longest path + Tarjan SCC (V6/V7)
             ├── memory_bridge.rs             # Cross-MCP memory symbiosis
             ├── formatter.rs                 # Output formatting
             │
@@ -360,8 +367,8 @@ cuba-thinking/
             ├── stage_validator.rs           # Stage transition validation
             │
             ├── ── Execution ──
-            ├── micro_prm.rs                 # Process Reward Model (7 signals)
-            ├── sandbox.rs                   # PyO3 sandbox + PEP 578 + ReDoS + Z3 (V5)
+            ├── micro_prm.rs                 # Process Reward Model (8 signals, V7)
+            ├── sandbox.rs                   # PyO3 sandbox + PEP 578 + ReDoS + Z3 + assertion diversity (V5/V7)
             ├── mcts_graph.rs                # MCTS graph structure
             └── shared_utils.rs              # Centralized stopwords, UTF-8 truncation
 ```
@@ -380,11 +387,12 @@ cuba-thinking/
 
 ### Test Suite
 
-- **170 tests** covering all engine modules (run with `--test-threads=1` for PyO3 safety)
-- **0 clippy errors** on `cargo clippy`
+- **178 tests** covering all engine modules (run with `--test-threads=1` for PyO3 safety)
+- **0 clippy errors** on `cargo clippy`, **0 warnings** on release build
 - Property-based boundary testing for all scoring functions
+- **15 magic constants** formally verified with boundary testing
 - NEMESIS 3-level test structure: 🟢 Normal, 🟡 Pessimistic, 🔴 Extreme
-- 7 audit rounds of security and mathematical hardening
+- 8 audit rounds of security and mathematical hardening (V1 + V2 research)
 
 ---
 
@@ -420,18 +428,22 @@ Every formula verified with unit tests and Wolfram Alpha:
 | Formula | Description | Verified |
 |---------|-------------|:--------:|
 | EWMA α = max(2/(n+1), α_floor) | Adaptive smoothing | ✅ |
-| Composite reward (6 signals) | Weights sum to 1.0 | ✅ |
-| PRM composite (7 signals) | Weights sum to 1.0 | ✅ |
+| Composite reward (6 signals) | Weights sum to 1.0 (3 stage profiles) | ✅ |
+| PRM composite (8 signals) | Weights sum to 1.0 | ✅ |
 | Trust score (5 components) | Weights sum to 1.0 | ✅ |
 | TF-IDF cosine similarity | Coherence scoring | ✅ |
 | Jaccard distance | Novelty information gain | ✅ |
 | Per-claim grounding ratio | ±1 sentence proximity | ✅ |
 | Confidence calibration | Stage-aware ranges | ✅ |
 | Tarjan SCC O(V+E) | Cycle detection correctness | ✅ |
+| Kahn's DP topological sort | DAG longest path (convergence-safe) | ✅ |
 | Depth degradation baseline | First-3-mean vs current | ✅ |
-| Jaccard similarity &#124;A∩B&#124;/&#124;A∪B&#124; | Mode collapse detection | ✅ |
+| Jaccard similarity &#124;A∩B&#124;/&#124;A∪B&#124; | Mode collapse + repetition bias detection | ✅ |
 | Shannon entropy H(X) | Text information density | ✅ |
 | LZ76 complexity | Kolmogorov complexity proxy | ✅ |
+| Pareto L2 norm d²+c² > 1.65 | Reward gaming detection | ✅ |
+| Goodhart variance < 0.005 | Statistical anomaly gaming | ✅ |
+| Sigmoid P(reject)=1/(1+e^(20d)) | Hedged MCTS rejection | ✅ |
 
 ---
 
@@ -456,7 +468,7 @@ Together, they give AI agents **memory + reasoning + search + execution**.
 | 2 | Roberts (1959). "EWMA Control Charts" | Adaptive EWMA smoothing |
 | 3 | Kocsis & Szepesvári (2006). "UCB Applied to Trees" | Budget-aware MCTS thresholds |
 | 4 | Golovneva et al. (2023). "ROSCOE" — ICLR | Faithfulness, claim grounding |
-| 5 | Dhuliawala et al. (2023). "CoVe Reduces Hallucination" — Meta AI | Chain-of-Verification |
+| 5 | Dhuliawala et al. (2023). "CoVe Reduces Hallucination" — Meta AI / ACL 2024 | Chain-of-Verification + question detection |
 | 6 | Lightman et al. (2023). "Let's Verify Step by Step" — OpenAI | Step-level reward (PRM) |
 | 7 | Kahneman & Tversky (1974). "Judgment Under Uncertainty" | Cognitive bias detection |
 | 8 | Flavell (1979). "Metacognition and Cognitive Monitoring" | Metacognitive analysis |
@@ -475,6 +487,10 @@ Together, they give AI agents **memory + reasoning + search + execution**.
 | 21 | Press et al. (2022). "Train Short, Test Long" | Depth degradation / KV cache saturation |
 | 22 | PEP 578 (2019). "Python Runtime Audit Hooks" | Sandbox security layer |
 | 23 | Cilibrasi & Vitányi (2005). "Clustering by Compression" — IEEE TIT | NCD-inspired mode collapse detection |
+| 24 | Kahn (1962). "Topological Sorting of Large Networks" — CACM | DAG longest path computation (V7) |
+| 25 | Besta et al. (2024). "Graph of Thoughts" — ETH Zurich | GoT DAG topology |
+| 26 | Greenblatt et al. (2024). "Sycophancy to Subterfuge" — arXiv:2406.10162 | Reward gaming / Goodhart detection |
+| 27 | Sun et al. (2024). "Diagram of Thought" — arXiv:2409.10038 | DAG formalization for reasoning |
 
 ---
 
