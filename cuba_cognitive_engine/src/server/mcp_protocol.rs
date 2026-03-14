@@ -674,6 +674,27 @@ impl McpServer {
             });
         }
 
+        // ─── N3: Reward Consistency Check (PRM↔EWMA divergence) ──
+        // Statistical basis: If PRM and EWMA estimate the same μ with
+        // σ ≈ 0.15 each, |PRM - EWMA| ~ HalfNormal(σ√2 ≈ 0.21).
+        // Threshold 0.4 → Z ≈ 1.9 → P(false alarm) ≈ 2.9%.
+        if is_sandbox {
+            let ewma_pct = ewma.percentage() / 100.0;
+            let divergence = (prm_score - ewma_pct).abs();
+            if divergence > 0.4 {
+                directives.push(corrective_directives::Directive {
+                    severity: corrective_directives::Severity::Warning,
+                    dimension: "Consistency",
+                    instruction: format!(
+                        "🔀 REWARD DIVERGENCE: PRM ({:.0}%) and EWMA ({:.0}%) diverge by {:.0}pp \
+                         (threshold: 40pp, Z≈1.9). This may indicate reward gaming — \
+                         high code scores without proportional reasoning quality, or vice versa.",
+                        prm_score * 100.0, ewma_pct * 100.0, divergence * 100.0
+                    ),
+                });
+            }
+        }
+
         // ─── R9: Graph-of-Thought (from persistent session) ──────
         let topology = sessions.with_session(hypothesis, budget, |session| {
             session.graph.topology_summary()
