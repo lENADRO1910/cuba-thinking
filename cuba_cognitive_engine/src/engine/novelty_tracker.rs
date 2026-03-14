@@ -78,10 +78,33 @@ impl NoveltyTracker {
 }
 
 /// Extract content terms from text (filtered, normalized).
+///
+/// V8: Strips comments before extraction to prevent novelty evasion.
+/// An LLM could inflate novelty by appending `# random_hash_123` to each thought.
 fn extract_content_terms(text: &str) -> Vec<String> {
     let stopwords = crate::engine::shared_utils::stopwords();
 
-    text.split_whitespace()
+    // V8: Strip comment lines (Python # and Rust //) before term extraction.
+    // This prevents inflating novelty with random comment strings.
+    let stripped: String = text
+        .lines()
+        .map(|line| {
+            let trimmed = line.trim();
+            if trimmed.starts_with('#') || trimmed.starts_with("//") {
+                "" // Drop pure comment lines
+            } else if let Some(pos) = line.find(" # ") {
+                &line[..pos] // Strip inline Python comments
+            } else if let Some(pos) = line.find(" // ") {
+                &line[..pos] // Strip inline Rust comments
+            } else {
+                line
+            }
+        })
+        .collect::<Vec<&str>>()
+        .join(" ");
+
+    stripped
+        .split_whitespace()
         .map(|w| {
             w.chars()
                 .filter(|c| c.is_alphanumeric())

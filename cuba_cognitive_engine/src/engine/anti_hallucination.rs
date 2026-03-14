@@ -222,13 +222,13 @@ fn check_contradiction_layer(ctx: &VerifyContext, warnings: &mut Vec<String>) ->
 
 /// G4: Reward gaming detection (Everitt 2021).
 fn check_gaming_layer(ctx: &VerifyContext, evidence_strength: f64, warnings: &mut Vec<String>) {
-    if !ctx.is_warmup && ctx.thought_number > 2 {
-        if detect_reward_gaming(ctx.thought, ctx.quality, evidence_strength) {
-            warnings.push(
-                "⚠️ G4: Potential reward gaming — high metric scores without proportional substance. Verify content authenticity."
-                    .to_string(),
-            );
-        }
+    if !ctx.is_warmup && ctx.thought_number > 2
+        && detect_reward_gaming(ctx.thought, ctx.quality, evidence_strength)
+    {
+        warnings.push(
+            "⚠️ G4: Potential reward gaming — high metric scores without proportional substance. Verify content authenticity."
+                .to_string(),
+        );
     }
 }
 

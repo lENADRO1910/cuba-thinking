@@ -41,6 +41,16 @@ const PYTHON_RECURSION_LIMIT: usize = 100;
 /// Maximum stdout capture size in bytes.
 const MAX_STDOUT_BYTES: usize = 8192;
 
+/// V8: Maximum code input size in bytes — prevents DoS from giant inputs.
+const MAX_CODE_BYTES: usize = 50_000;
+
+/// V8: Maximum nesting depth for brackets/parens — prevents CPython C-stack
+/// exhaustion during `ast.parse()`. Deeply nested expressions like
+/// `eval("(" * 10000 + ")" * 10000)` crash CPython's recursive-descent
+/// parser at the C level, crashing the entire Rust process via PyO3.
+/// Checked BEFORE any Python call.
+const MAX_NESTING_DEPTH: usize = 100;
+
 /// FIX-1: Maximum virtual memory for sandboxed Python execution (512 MB).
 /// Prevents OOM bombs (e.g. `x = [0] * 10**10`) from crashing the process.
 /// 512 MB instead of 256 MB because PyO3 shares the Rust process's
@@ -245,9 +255,64 @@ pub fn extract_python_block(text: &str) -> Option<String> {
     None
 }
 
+/// V8: Pre-parse nesting depth guard — prevents CPython C-stack exhaustion.
+///
+/// CPython's `ast.parse()` uses a recursive-descent parser that can overflow
+/// the C call stack on deeply nested input BEFORE our gas tracer activates.
+/// Since PyO3 shares the process, a Python segfault = Rust process crash.
+///
+/// This O(N) scan runs entirely in Rust, rejecting malicious inputs before
+/// any Python code executes.
+fn check_nesting_depth(code: &str) -> Option<String> {
+    let mut depth: usize = 0;
+    let mut max_depth: usize = 0;
+    for ch in code.chars() {
+        match ch {
+            '(' | '[' | '{' => {
+                depth += 1;
+                max_depth = max_depth.max(depth);
+            }
+            ')' | ']' | '}' => {
+                depth = depth.saturating_sub(1);
+            }
+            _ => {}
+        }
+        if max_depth > MAX_NESTING_DEPTH {
+            return Some(format!(
+                "SECURITY: Nesting depth {} exceeds limit {} (CPython stack exhaustion guard)",
+                max_depth, MAX_NESTING_DEPTH
+            ));
+        }
+    }
+    None
+}
+
 /// Execute Python code in sandboxed PyO3 with AST-based security + analysis.
 fn execute_in_sandbox(code: &str) -> SandboxResult {
     let start = std::time::Instant::now();
+
+    // V8: Pre-Python guards — run BEFORE acquiring GIL to avoid C-stack crashes.
+    if code.len() > MAX_CODE_BYTES {
+        return SandboxResult {
+            success: false,
+            stdout: String::new(),
+            error: Some(format!(
+                "SECURITY: Code size {} bytes exceeds limit {} bytes",
+                code.len(), MAX_CODE_BYTES
+            )),
+            execution_ms: start.elapsed().as_millis() as u64,
+            ast_analysis: AstAnalysis::empty(),
+        };
+    }
+    if let Some(depth_error) = check_nesting_depth(code) {
+        return SandboxResult {
+            success: false,
+            stdout: String::new(),
+            error: Some(depth_error),
+            execution_ms: start.elapsed().as_millis() as u64,
+            ast_analysis: AstAnalysis::empty(),
+        };
+    }
 
     Python::with_gil(|py| {
         // ─── Step 1: AST-Based Security Scan (DEBT-T02) ──────
@@ -708,11 +773,22 @@ else:
             cc += len(node.handlers)
         elif isinstance(node, ast.Assert):
             asserts += 1
-            # V7 (P3-C): Track unique variables in assert targets.
-            # Counts Name nodes in the assertion test expression.
+            # V7 (P3-C) + V8: Track unique variables in assert targets.
+            # Counts both Name nodes AND Attribute nodes (e.g., response.status).
             for child in ast.walk(node.test):
                 if isinstance(child, ast.Name):
                     assert_targets.add(child.id)
+                elif isinstance(child, ast.Attribute):
+                    # Build full dotted path: response.status -> "response.status"
+                    parts = []
+                    attr_node = child
+                    while isinstance(attr_node, ast.Attribute):
+                        parts.append(attr_node.attr)
+                        attr_node = attr_node.value
+                    if isinstance(attr_node, ast.Name):
+                        parts.append(attr_node.id)
+                    parts.reverse()
+                    assert_targets.add('.'.join(parts))
         elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             functions += 1
             if node.returns:
