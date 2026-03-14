@@ -262,6 +262,12 @@ impl EwmaTracker {
     /// Without unbiasing, a low first value (0.30) anchors ema_slow,
     /// causing false MACD divergence when quality improves — wrongly
     /// pruning an improving MCTS branch.
+    ///
+    /// # Safety (F5)
+    ///
+    /// Bias correction denominators `(1 - β^t)` approach 0.0 when t→0.
+    /// Guard `n < 4` ensures t ≥ 4, but EPSILON floor defends against
+    /// future guard relaxation producing NaN via 0/0.
     pub fn is_collapsing_kinematically(&self) -> bool {
         let n = self.reward_history.len();
         if n < 4 {
@@ -273,6 +279,9 @@ impl EwmaTracker {
         let mut ema_fast = 0.0;
         let mut ema_slow = 0.0;
 
+        // F5: Epsilon for bias correction denominators — prevents NaN if guard changes.
+        const BIAS_EPSILON: f64 = 1e-12;
+
         for (t, &r) in vals.iter().enumerate() {
             ema_fast = 0.5 * r + 0.5 * ema_fast;
             ema_slow = 0.2 * r + 0.8 * ema_slow;
@@ -280,9 +289,9 @@ impl EwmaTracker {
             // Only evaluate MACD at the final data point (present)
             if t == n - 1 {
                 let t_f64 = (t + 1) as f64;
-                // Denis & Roberts 1959 bias correction
-                let unbiased_fast = ema_fast / (1.0 - 0.5_f64.powf(t_f64));
-                let unbiased_slow = ema_slow / (1.0 - 0.8_f64.powf(t_f64));
+                // Denis & Roberts 1959 bias correction (F5: epsilon floor)
+                let unbiased_fast = ema_fast / (1.0 - 0.5_f64.powf(t_f64)).max(BIAS_EPSILON);
+                let unbiased_slow = ema_slow / (1.0 - 0.8_f64.powf(t_f64)).max(BIAS_EPSILON);
 
                 let macd = unbiased_fast - unbiased_slow;
                 return macd < -0.08;
