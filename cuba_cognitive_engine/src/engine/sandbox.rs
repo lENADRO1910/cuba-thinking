@@ -24,6 +24,8 @@
 
 use anyhow::Result;
 use pyo3::prelude::*;
+use pyo3::ffi::c_str;
+use std::ffi::CString;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::Duration;
@@ -386,9 +388,10 @@ sys.settrace(_gas_tracer)
             recursion_limit = PYTHON_RECURSION_LIMIT,
             rlimit = rlimit_setup,
         );
-        let globals = pyo3::types::PyDict::new_bound(py);
+        let globals = pyo3::types::PyDict::new(py);
 
-        if let Err(e) = py.run_bound(&setup_script, Some(&globals), None) {
+        let setup_cstr = CString::new(setup_script).unwrap_or_default();
+        if let Err(e) = py.run(&setup_cstr, Some(&globals), None) {
             return SandboxResult {
                 success: false,
                 stdout: String::new(),
@@ -399,11 +402,12 @@ sys.settrace(_gas_tracer)
         }
 
         // Execute user code
-        let exec_result = py.run_bound(code, Some(&globals), None);
+        let code_cstr = CString::new(code).unwrap_or_default();
+        let exec_result = py.run(&code_cstr, Some(&globals), None);
 
         // Capture stdout (truncated to MAX_STDOUT_BYTES)
         let stdout = py
-            .eval_bound("_captured_stdout.getvalue()", Some(&globals), None)
+            .eval(c_str!("_captured_stdout.getvalue()"), Some(&globals), None)
             .and_then(|v| v.extract::<String>())
             .unwrap_or_default();
         // FIX-1: UTF-8 safe truncation — &stdout[..N] panics if N falls
@@ -418,17 +422,17 @@ sys.settrace(_gas_tracer)
         };
 
         // Restore stdout
-        let _ = py.run_bound("sys.stdout = sys.__stdout__", Some(&globals), None);
+        let _ = py.run(c_str!("sys.stdout = sys.__stdout__"), Some(&globals), None);
 
         // FIX-1: Restore original RLIMIT_DATA to prevent leaking to subsequent calls
-        let _ = py.run_bound(
-            r#"
+        let _ = py.run(
+            c_str!("
 if _orig_rlimit_data is not None:
     try:
         _sandbox_resource.setrlimit(_sandbox_resource.RLIMIT_DATA, _orig_rlimit_data)
     except (NameError, ValueError, OSError):
         pass
-"#,
+"),
             Some(&globals),
             None,
         );
@@ -583,15 +587,16 @@ else:
 _violations_result_ = violations
 "#;
 
-    let globals = pyo3::types::PyDict::new_bound(py);
+    let globals = pyo3::types::PyDict::new(py);
     globals.set_item("_code_input_", code).unwrap_or(());
 
-    if py.run_bound(scan_script, Some(&globals), None).is_err() {
+    let scan_cstr = CString::new(scan_script).unwrap_or_default();
+    if py.run(&scan_cstr, Some(&globals), None).is_err() {
         return vec![]; // Parse errors handled during execution
     }
 
     // Extract violations list
-    py.eval_bound("_violations_result_", Some(&globals), None)
+    py.eval(c_str!("_violations_result_"), Some(&globals), None)
         .and_then(|v| v.extract::<Vec<String>>())
         .unwrap_or_default()
 }
@@ -649,32 +654,35 @@ else:
     }
 "#;
 
-    let globals = pyo3::types::PyDict::new_bound(py);
+    let globals = pyo3::types::PyDict::new(py);
     globals.set_item("_code_input_", code).unwrap_or(());
 
-    if py.run_bound(analysis_script, Some(&globals), None).is_err() {
+    let analysis_cstr = CString::new(analysis_script).unwrap_or_default();
+    if py.run(&analysis_cstr, Some(&globals), None).is_err() {
         return AstAnalysis {
             security_violations: vec!["AST analysis failed".to_string()],
             ..AstAnalysis::empty()
         };
     }
 
-    // Extract results using eval_bound (most reliable across PyO3 versions)
+    // Extract results using CString eval (PyO3 0.24 CStr API)
     let extract_usize = |key: &str, default: usize| -> usize {
         let expr = format!("_result_.get('{}', {})", key, default);
-        py.eval_bound(&expr, Some(&globals), None)
+        let expr_cstr = CString::new(expr).unwrap_or_default();
+        py.eval(&expr_cstr, Some(&globals), None)
             .and_then(|v| v.extract::<usize>())
             .unwrap_or(default)
     };
     let extract_bool = |key: &str, default: bool| -> bool {
         let expr = format!("_result_.get('{}', {})", key, if default { "True" } else { "False" });
-        py.eval_bound(&expr, Some(&globals), None)
+        let expr_cstr = CString::new(expr).unwrap_or_default();
+        py.eval(&expr_cstr, Some(&globals), None)
             .and_then(|v| v.extract::<bool>())
             .unwrap_or(default)
     };
 
     let has_error = py
-        .eval_bound("'error' in _result_", Some(&globals), None)
+        .eval(c_str!("'error' in _result_"), Some(&globals), None)
         .and_then(|v| v.extract::<bool>())
         .unwrap_or(false);
 
