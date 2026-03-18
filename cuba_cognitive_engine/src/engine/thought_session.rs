@@ -487,6 +487,9 @@ impl ThoughtSession {
 /// **IMPORTANT**: If a concurrent transport (REST/WebSocket) is added,
 /// this MUST be migrated to `tokio::sync::Mutex` or `DashMap` to prevent
 /// blocking the tokio worker thread pool under contention.
+///
+/// Maximum number of active cognitive sessions to prevent OOM / DoS.
+const MAX_ACTIVE_SESSIONS: usize = 1000;
 pub struct SessionStore {
     sessions: Mutex<HashMap<[u8; 32], ThoughtSession>>,
 }
@@ -512,6 +515,18 @@ impl SessionStore {
 
         // Cleanup expired sessions (opportunistic)
         sessions.retain(|_, session| !session.is_expired());
+
+        // Enforce capacity limit to prevent unbounded memory growth (DoS protection)
+        if !sessions.contains_key(&hash) && sessions.len() >= MAX_ACTIVE_SESSIONS {
+            // Find and remove the oldest session
+            if let Some(oldest_key) = sessions
+                .iter()
+                .min_by_key(|(_, session)| session.last_accessed)
+                .map(|(k, _)| *k)
+            {
+                sessions.remove(&oldest_key);
+            }
+        }
 
         // Get or create
         let session = sessions
