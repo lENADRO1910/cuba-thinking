@@ -1,8 +1,8 @@
 # Node.js legacy
 node_modules/
 dist/
-src/__tests__/
-jest.config.mjs
+
+
 *.tsbuildinfo
 coverage/
 
