@@ -3,7 +3,7 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::sync::Arc;
-use tokio::io::{self, AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{self, AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::time::Instant;
 
 use super::observability::RedMetrics;
@@ -154,10 +154,15 @@ impl McpServer {
         local.run_until(async move {
             let mut stdin = BufReader::new(io::stdin());
             let mut line = String::new();
+            // 10 MB limit to prevent OOM via unbounded line lengths
+            const MAX_LINE_LENGTH: u64 = 10 * 1024 * 1024;
 
             loop {
                 line.clear();
-                let bytes_read = stdin.read_line(&mut line).await.unwrap_or(0);
+                let bytes_read = {
+                    let mut take = (&mut stdin).take(MAX_LINE_LENGTH);
+                    take.read_line(&mut line).await.unwrap_or(0)
+                };
                 if bytes_read == 0 {
                     // EOF — emit RED metrics summary before shutdown
                     self.metrics.emit_summary();
