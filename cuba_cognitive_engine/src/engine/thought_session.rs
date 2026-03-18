@@ -293,6 +293,9 @@ impl ThoughtSession {
     /// Capped at 5 entries to bound memory.
     #[allow(dead_code)]
     pub fn register_failed_thought(&mut self, text: &str) {
+        if text.len() > 100_000 {
+            return; // V21: Prevent memory exhaustion from giant strings
+        }
         const MAX_FAILED: usize = 5;
         if self.failed_thoughts.len() >= MAX_FAILED {
             self.failed_thoughts.remove(0);
@@ -312,8 +315,8 @@ impl ThoughtSession {
     /// Complexity: O(n·m) where n=failed thoughts, m=terms per thought.
     #[allow(dead_code)]
     pub fn is_mode_collapse(&self, new_thought: &str) -> Option<f64> {
-        if self.failed_thoughts.is_empty() {
-            return None;
+        if self.failed_thoughts.is_empty() || new_thought.len() > 100_000 {
+            return None; // V21: Prevent CPU exhaustion from huge inputs
         }
 
         let stopwords = crate::engine::shared_utils::stopwords();
