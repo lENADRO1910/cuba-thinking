@@ -693,6 +693,9 @@ mod tests {
         assert_eq!(scores.clarity, 0.0);
         assert_eq!(scores.depth, 0.0);
         assert_eq!(scores.breadth, 0.0);
+        assert_eq!(scores.logic, 0.0);
+        assert_eq!(scores.relevance, 0.5);
+        assert_eq!(scores.actionability, 0.0);
     }
 
     // ─── NEW-2: Logistic Length Penalty Tests ─────────

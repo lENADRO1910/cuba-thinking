@@ -1,0 +1,20 @@
+<<<<<<< SEARCH
+    #[test]
+    fn test_empty_input() {
+        let scores = compute_quality("", &[]);
+        assert_eq!(scores.clarity, 0.0);
+        assert_eq!(scores.depth, 0.0);
+        assert_eq!(scores.breadth, 0.0);
+    }
+=======
+    #[test]
+    fn test_empty_input() {
+        let scores = compute_quality("", &[]);
+        assert_eq!(scores.clarity, 0.0);
+        assert_eq!(scores.depth, 0.0);
+        assert_eq!(scores.breadth, 0.0);
+        assert_eq!(scores.logic, 0.0);
+        assert_eq!(scores.relevance, 0.5); // relevance returns 0.5 when context_keywords is empty
+        assert_eq!(scores.actionability, 0.0);
+    }
+>>>>>>> REPLACE
