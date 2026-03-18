@@ -22,8 +22,7 @@ use crate::engine::thought_graph::ThoughtGraph;
 use serde::Serialize;
 use sha2::{Sha256, Digest};
 use std::collections::{HashMap, VecDeque};
-
-use std::sync::Mutex;
+use std::sync::{Mutex, Arc};
 use std::time::Instant;
 
 /// Session TTL: 10 minutes.
@@ -97,11 +96,11 @@ pub struct ThoughtSession {
     /// Graph-of-Thought — builds DAG across calls.
     pub graph: ThoughtGraph,
     /// Recent thought texts — capped at MAX_THOUGHTS (ring buffer).
-    pub thoughts: VecDeque<String>,
+    pub thoughts: VecDeque<Arc<str>>,
     /// Total thoughts recorded (monotonic, not capped).
     total_thoughts: usize,
     /// The original hypothesis text — for drift detection (G11).
-    pub original_hypothesis: String,
+    pub original_hypothesis: Arc<str>,
     /// Hash of the hypothesis — session key.
     #[allow(dead_code)]
     hypothesis_hash: [u8; 32],
@@ -114,7 +113,7 @@ pub struct ThoughtSession {
     /// NEW-1: Confidence history for oscillation detection.
     pub confidence_history: VecDeque<f64>,
     /// Vector A: First thought text for root-anchoring.
-    pub first_thought: Option<String>,
+    pub first_thought: Option<Arc<str>>,
     /// V5-1: Epistemological snapshots — maps thought_number -> valid thoughts length.
     /// Used to rollback state when MCTS rejects a thought, preventing state poisoning.
     thought_snapshots: HashMap<usize, usize>,
@@ -125,7 +124,7 @@ pub struct ThoughtSession {
     /// When MCTS rejects a thought, its text is stored here.
     /// New thoughts are compared against these via Jaccard similarity
     /// to detect paraphrasing of rejected ideas (mode collapse).
-    failed_thoughts: Vec<String>,
+    failed_thoughts: Vec<Arc<str>>,
 }
 
 impl ThoughtSession {
@@ -137,7 +136,7 @@ impl ThoughtSession {
             graph: ThoughtGraph::new(),
             thoughts: VecDeque::with_capacity(MAX_THOUGHTS),
             total_thoughts: 0,
-            original_hypothesis: hypothesis.to_string(),
+            original_hypothesis: hypothesis.into(),
             hypothesis_hash: compute_hypothesis_hash(hypothesis),
             created_at: Instant::now(),
             last_accessed: Instant::now(),
@@ -170,12 +169,15 @@ impl ThoughtSession {
         if self.thoughts.len() >= MAX_THOUGHTS {
             self.thoughts.pop_front();
         }
-        self.thoughts.push_back(thought.to_string());
+        
+        // Zero-Copy PRM Guard: Allocate once and copy pointers O(1)
+        let arc_thought: Arc<str> = thought.into();
+        self.thoughts.push_back(arc_thought.clone());
         self.total_thoughts += 1;
 
         // Vector A: Capture first thought for root-anchoring
         if self.first_thought.is_none() {
-            self.first_thought = Some(thought.to_string());
+            self.first_thought = Some(arc_thought.clone());
         }
 
         // Update graph
@@ -295,7 +297,7 @@ impl ThoughtSession {
         if self.failed_thoughts.len() >= MAX_FAILED {
             self.failed_thoughts.remove(0);
         }
-        self.failed_thoughts.push(text.to_string());
+        self.failed_thoughts.push(text.into());
     }
 
     /// V7-2: Detect mode collapse — LLM paraphrasing rejected thoughts.
@@ -363,7 +365,7 @@ impl ThoughtSession {
             .iter()
             .rev()
             .take(n)
-            .map(|s| s.as_str())
+            .map(|s| &**s)
             .collect::<Vec<_>>()
             .into_iter()
             .rev()

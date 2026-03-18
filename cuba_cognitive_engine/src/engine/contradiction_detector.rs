@@ -350,22 +350,62 @@ pub fn detect_internal_contradictions(thought: &str) -> Vec<InternalContradictio
     }
 
     let mut contradictions = Vec::new();
+    let model_opt = get_nli_model().and_then(|m| m.lock().ok());
+    
+    // Generate all pairs
+    let mut pairs = Vec::new();
     for i in 0..sentences.len() {
         for j in (i + 1)..sentences.len() {
-            let a_lower = sentences[i].to_lowercase();
-            let b_lower = sentences[j].to_lowercase();
+            pairs.push((i, j, sentences[i], sentences[j]));
+        }
+    }
+    
+    // Hard bound: maximum 64 pairs to prevent O(N^2) sandbox timeouts
+    pairs.truncate(64);
+
+    let mut checked_by_nli = vec![false; pairs.len()];
+
+    // ── Try NLI semantic detection (Batched ONNX Execution) ──
+    if let Some(ref model) = model_opt {
+        let candidate_labels = &["contradiction", "entailment", "neutral"];
+        let inputs: Vec<String> = pairs.iter()
+            .map(|(_, _, a, b)| format!("{} This statement: {}", a, b))
+            .collect();
+            
+        let input_refs: Vec<&str> = inputs.iter().map(|s| s.as_str()).collect();
+        
+        if let Ok(batch_predictions) = model.predict_multilabel(input_refs, candidate_labels, None, 128) {
+            for (idx, predictions) in batch_predictions.iter().enumerate() {
+                checked_by_nli[idx] = true;
+                for label in predictions {
+                    if label.text == "contradiction" && label.score > 0.65 {
+                        let (_, _, a, b) = pairs[idx];
+                        contradictions.push(InternalContradiction {
+                            claim_a: truncate_str(a, 60),
+                            claim_b: truncate_str(b, 60),
+                        });
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    // ── Fallback to Lexical Heuristics (for failed/unbatched queries) ──
+    for (idx, (_, _, a, b)) in pairs.iter().enumerate() {
+        if !checked_by_nli[idx] {
+            let a_lower = a.to_lowercase();
+            let b_lower = b.to_lowercase();
 
             if let Some(_pair) = check_antonym_conflict(&a_lower, &b_lower) {
                 contradictions.push(InternalContradiction {
-                    claim_a: truncate_str(sentences[i], 60),
-                    claim_b: truncate_str(sentences[j], 60),
+                    claim_a: truncate_str(a, 60),
+                    claim_b: truncate_str(b, 60),
                 });
-            }
-
-            if check_quantifier_conflict(&a_lower, &b_lower) {
+            } else if check_quantifier_conflict(&a_lower, &b_lower) {
                 contradictions.push(InternalContradiction {
-                    claim_a: truncate_str(sentences[i], 60),
-                    claim_b: truncate_str(sentences[j], 60),
+                    claim_a: truncate_str(a, 60),
+                    claim_b: truncate_str(b, 60),
                 });
             }
         }
