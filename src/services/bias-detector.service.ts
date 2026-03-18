@@ -1,4 +1,4 @@
-import { keywordSimilarity } from './embedding.service.js';
+import { EmbeddingService, keywordSimilarity } from './embedding.service.js';
 
 export type BiasType =
   | 'confirmation_bias'
@@ -33,6 +33,7 @@ export class BiasDetectorService {
     totalThoughts: number,
     confidence: number | undefined,
     history: string[],
+    embeddings: EmbeddingService,
     explicitBias?: string,
   ): BiasResult | null {
     if (explicitBias) {
@@ -44,7 +45,12 @@ export class BiasDetectorService {
     const progress = thoughtNumber / totalThoughts;
     if (history.length >= 3) {
       const recent = history.slice(-3);
-      const similarities = recent.map((h) => keywordSimilarity(h, thought));
+      const currentFreq = embeddings.getFrequencyMap(thoughtNumber, thought);
+      const similarities = recent.map((h, i) => {
+        const histNum = history.length - 2 + i;
+        const histFreq = embeddings.getFrequencyMap(histNum, h);
+        return keywordSimilarity(h, thought, histFreq, currentFreq);
+      });
       const avgSim = similarities.reduce((a, b) => a + b, 0) / similarities.length;
       if (avgSim > 0.7) {
         return {
@@ -57,7 +63,9 @@ export class BiasDetectorService {
       const anchoringWords = ['initially', 'originally', 'first thought', 'started with', 'began'];
       const hasAnchoring = anchoringWords.some((w) => lower.includes(w));
       if (hasAnchoring) {
-        const simToFirst = keywordSimilarity(thought, history[0]);
+        const currentFreq = embeddings.getFrequencyMap(thoughtNumber, thought);
+        const firstFreq = embeddings.getFrequencyMap(1, history[0]);
+        const simToFirst = keywordSimilarity(thought, history[0], currentFreq, firstFreq);
         if (simToFirst > 0.6) {
           return {
             type: 'anchoring_bias',

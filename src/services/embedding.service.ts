@@ -17,6 +17,7 @@ async function loadTransformers(): Promise<boolean> {
 export class EmbeddingService {
   private extractor: Pipeline | null = null;
   private cache = new Map<number, Float32Array>();
+  private freqCache = new Map<number, { freq: Map<string, number>; norm: number }>();
   private initPromise: Promise<boolean> | null = null;
   private _available = false;
   private _initAttempted = false;
@@ -106,41 +107,61 @@ export class EmbeddingService {
   
   clearCache(): void {
     this.cache.clear();
+    this.freqCache.clear();
   }
 
   
   get cacheSize(): number {
     return this.cache.size;
   }
+
+  getFrequencyMap(thoughtNumber: number, text: string): { freq: Map<string, number>; norm: number } {
+    const cached = this.freqCache.get(thoughtNumber);
+    if (cached) return cached;
+
+    const tokens = tokenize(text);
+    const freq = frequencyMap(tokens);
+    let norm = 0;
+    freq.forEach((count) => {
+      norm += count * count;
+    });
+    const entry = { freq, norm };
+    this.freqCache.set(thoughtNumber, entry);
+    return entry;
+  }
 }
 
-export function keywordSimilarity(textA: string, textB: string): number {
+export function keywordSimilarity(
+  textA: string,
+  textB: string,
+  freqA?: { freq: Map<string, number>; norm: number },
+  freqB?: { freq: Map<string, number>; norm: number },
+): number {
   if (textA === textB) return 1.0;
   if (!textA.trim() || !textB.trim()) return 0.0;
 
-  const tokensA = tokenize(textA);
-  const tokensB = tokenize(textB);
+  const fA = freqA || { freq: frequencyMap(tokenize(textA)), norm: 0 };
+  const fB = freqB || { freq: frequencyMap(tokenize(textB)), norm: 0 };
 
-  if (tokensA.length === 0 || tokensB.length === 0) return 0.0;
-
-  const freqA = frequencyMap(tokensA);
-  const freqB = frequencyMap(tokensB);
+  if (fA.freq.size === 0 || fB.freq.size === 0) return 0.0;
 
   let dotProduct = 0;
-  let normA = 0;
-  let normB = 0;
-
-  freqA.forEach((countA, token) => {
-    normA += countA * countA;
-    const countB = freqB.get(token);
+  fA.freq.forEach((countA, token) => {
+    const countB = fB.freq.get(token);
     if (countB !== undefined) {
       dotProduct += countA * countB;
     }
   });
 
-  freqB.forEach((countB) => {
-    normB += countB * countB;
-  });
+  let normA = fA.norm;
+  if (normA === 0) {
+    fA.freq.forEach((countA) => { normA += countA * countA; });
+  }
+
+  let normB = fB.norm;
+  if (normB === 0) {
+    fB.freq.forEach((countB) => { normB += countB * countB; });
+  }
 
   if (normA === 0 || normB === 0) return 0;
   return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));

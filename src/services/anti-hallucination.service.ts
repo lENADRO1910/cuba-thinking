@@ -36,8 +36,8 @@ const STAGNATION_MIN_COUNT = 3;
 
 export class AntiHallucinationService {
   private allAssumptions: Array<{ thought: number; text: string }> = [];
+  private assumptionFreqs = new Map<string, { freq: Map<string, number>; norm: number }>();
   private thoughtTexts = new Map<number, string>();
-  private thoughtTextsLower = new Map<number, string>();
   private thoughtNegationScores = new Map<number, number>();
 
   
@@ -55,9 +55,24 @@ export class AntiHallucinationService {
       if (!trimmed) continue;
       let isDuplicate = false;
 
+      let freqCurr = this.assumptionFreqs.get(trimmed);
+      if (!freqCurr) {
+        const tokens = trimmed.toLowerCase().replace(/[^\w\s]/g, '').split(/\s+/).filter(t => t.length > 1);
+        const freq = new Map<string, number>();
+        let norm = 0;
+        for (const token of tokens) {
+          const count = (freq.get(token) ?? 0) + 1;
+          freq.set(token, count);
+        }
+        freq.forEach(count => { norm += count * count; });
+        freqCurr = { freq, norm };
+        this.assumptionFreqs.set(trimmed, freqCurr);
+      }
+
       for (const existing of this.allAssumptions) {
         // B1 fix: always compare assumption TEXT strings, not full thought embeddings
-        const sim = keywordSimilarity(trimmed, existing.text);
+        const freqExisting = this.assumptionFreqs.get(existing.text);
+        const sim = keywordSimilarity(trimmed, existing.text, freqCurr, freqExisting);
         if (sim > ASSUMPTION_DEDUP_THRESHOLD) {
           isDuplicate = true;
           break;
@@ -81,9 +96,7 @@ export class AntiHallucinationService {
     stage?: ThinkingStage,
   ): Promise<Contradiction[]> {
     this.thoughtTexts.set(thoughtNumber, thought);
-    const currentLower = thought.toLowerCase();
-    const currentNegScore = countNegations(currentLower);
-    this.thoughtTextsLower.set(thoughtNumber, currentLower);
+    const currentNegScore = countNegations(thought.toLowerCase());
     this.thoughtNegationScores.set(thoughtNumber, currentNegScore);
 
     if (thoughtNumber <= 1) return [];
@@ -95,7 +108,9 @@ export class AntiHallucinationService {
       if (embeddings.isAvailable) {
         sim = embeddings.similarity(prevNum, thoughtNumber);
       } else {
-        sim = keywordSimilarity(thought, prevText);
+        const freqCurr = embeddings.getFrequencyMap(thoughtNumber, thought);
+        const freqPrev = embeddings.getFrequencyMap(prevNum, prevText);
+        sim = keywordSimilarity(thought, prevText, freqCurr, freqPrev);
       }
       // V5: Use stage-appropriate threshold
       const threshold = stage
@@ -118,11 +133,10 @@ export class AntiHallucinationService {
 
         // Fallback: negation polarity check
         const prevNegScore = this.thoughtNegationScores.get(prevNum) ?? countNegations(prevText.toLowerCase());
-        const prevLower = this.thoughtTextsLower.get(prevNum) ?? prevText.toLowerCase();
 
         // Semantic polarity check
         const polarityDiff = Math.abs(currentNegScore - prevNegScore);
-        if (polarityDiff >= 1 || hasNegationDifference(currentLower, prevLower)) {
+        if (polarityDiff >= 1) {
           contradictions.push({
             thoughtA: prevNum,
             thoughtB: thoughtNumber,
@@ -189,7 +203,9 @@ export class AntiHallucinationService {
         const textPrev = this.thoughtTexts.get(prev);
         const textCurr = this.thoughtTexts.get(i);
         if (!textPrev || !textCurr) break;
-        sim = keywordSimilarity(textPrev, textCurr);
+        const freqPrev = embeddings.getFrequencyMap(prev, textPrev);
+        const freqCurr = embeddings.getFrequencyMap(i, textCurr);
+        sim = keywordSimilarity(textPrev, textCurr, freqPrev, freqCurr);
       }
 
       if (sim > STAGNATION_SIM_THRESHOLD) {
@@ -240,24 +256,10 @@ export class AntiHallucinationService {
 
   reset(): void {
     this.allAssumptions = [];
+    this.assumptionFreqs.clear();
     this.thoughtTexts.clear();
-    this.thoughtTextsLower.clear();
     this.thoughtNegationScores.clear();
   }
-}
-
-function hasNegationDifference(textA: string, textB: string): boolean {
-  const wordsA = new Set(textA.split(/\s+/));
-  const wordsB = new Set(textB.split(/\s+/));
-
-  let negA = 0;
-  let negB = 0;
-
-  for (const word of NEGATION_WORDS) {
-    if (wordsA.has(word)) negA++;
-    if (wordsB.has(word)) negB++;
-  }
-  return Math.abs(negA - negB) >= 1;
 }
 
 // Count negation markers for polarity scoring

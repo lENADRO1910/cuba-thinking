@@ -6,7 +6,7 @@ import type {
   VerificationCheckpoint,
   FatigueReport,
 } from '../types.js';
-import { EmbeddingService } from './embedding.service.js';
+import { EmbeddingService, keywordSimilarity } from './embedding.service.js';
 import { NLIService } from './nli.service.js';
 import { StageEngine } from './stage-engine.service.js';
 import { QualityMetricsService } from './quality-metrics.service.js';
@@ -143,8 +143,19 @@ export class CognitiveProcessor {
     qualityOverall: number,
     contradictionCount: number,
   ) {
-    const coherence = this.embeddings.isAvailable && thoughtNumber > 1
-      ? this.embeddings.similarity(thoughtNumber - 1, thoughtNumber) : 0.5;
+    let coherence = 0.5;
+    if (thoughtNumber > 1) {
+      if (this.embeddings.isAvailable) {
+        coherence = this.embeddings.similarity(thoughtNumber - 1, thoughtNumber);
+      } else {
+        const prevText = this.thoughtHistory[thoughtNumber - 2];
+        if (prevText) {
+          const freqPrev = this.embeddings.getFrequencyMap(thoughtNumber - 1, prevText);
+          const freqCurr = this.embeddings.getFrequencyMap(thoughtNumber, thought);
+          coherence = keywordSimilarity(prevText, thought, freqPrev, freqCurr);
+        }
+      }
+    }
     // B2 fix: clamp to [0,1] — Roberts (1959)
     const contradictionRatio = thoughtNumber > 0
       ? Math.min(1, contradictionCount / thoughtNumber) : 0;
@@ -157,7 +168,7 @@ export class CognitiveProcessor {
     const fatigue = this.computeFatigue(qualityOverall);
     const biasResult = this.bias.detect(
       thought, thoughtNumber, totalThoughts,
-      input.confidence, this.thoughtHistory, input.biasDetected,
+      input.confidence, this.thoughtHistory, this.embeddings, input.biasDetected,
     );
     this.updateHistory(thought, thoughtNumber, qualityOverall);
     // MCTS: historical quality for rollback
