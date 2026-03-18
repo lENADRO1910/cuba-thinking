@@ -13,25 +13,19 @@ use std::collections::HashSet;
 pub fn stopwords() -> HashSet<&'static str> {
     [
         // English
-        "the", "a", "an", "is", "are", "was", "were", "be", "been",
-        "being", "have", "has", "had", "do", "does", "did", "will",
-        "would", "could", "should", "may", "might", "shall", "can",
-        "to", "of", "in", "for", "on", "with", "at", "by", "from",
-        "as", "into", "through", "during", "before", "after", "above",
-        "below", "between", "under", "and", "but", "or", "nor", "not",
-        "so", "yet", "both", "either", "neither", "each", "every",
-        "all", "any", "few", "more", "most", "other", "some", "such",
-        "no", "only", "own", "same", "than", "too", "very", "just",
-        "it", "its", "this", "that", "these", "those", "i", "me",
-        "my", "we", "our", "you", "your", "he", "him", "his", "she",
-        "her", "they", "them", "their", "what", "which", "who", "whom",
-        "if", "also",
-        // Spanish
-        "el", "la", "los", "las", "un", "una", "unos", "unas",
-        "de", "del", "en", "con", "por", "para", "sin", "sobre",
-        "es", "son", "fue", "ser", "estar", "hay", "como", "pero",
-        "que", "se", "su", "sus", "este", "esta", "esto", "eso",
-        "sino", "donde", "puede", "tiene", "entre",
+        "the", "a", "an", "is", "are", "was", "were", "be", "been", "being", "have", "has", "had",
+        "do", "does", "did", "will", "would", "could", "should", "may", "might", "shall", "can",
+        "to", "of", "in", "for", "on", "with", "at", "by", "from", "as", "into", "through",
+        "during", "before", "after", "above", "below", "between", "under", "and", "but", "or",
+        "nor", "not", "so", "yet", "both", "either", "neither", "each", "every", "all", "any",
+        "few", "more", "most", "other", "some", "such", "no", "only", "own", "same", "than", "too",
+        "very", "just", "it", "its", "this", "that", "these", "those", "i", "me", "my", "we",
+        "our", "you", "your", "he", "him", "his", "she", "her", "they", "them", "their", "what",
+        "which", "who", "whom", "if", "also", // Spanish
+        "el", "la", "los", "las", "un", "una", "unos", "unas", "de", "del", "en", "con", "por",
+        "para", "sin", "sobre", "es", "son", "fue", "ser", "estar", "hay", "como", "pero", "que",
+        "se", "su", "sus", "este", "esta", "esto", "eso", "sino", "donde", "puede", "tiene",
+        "entre",
     ]
     .iter()
     .copied()
@@ -70,10 +64,35 @@ pub fn is_code_input(text: &str) -> bool {
     }
 
     let code_indicators = [
-        "def ", "class ", "import ", "from ", "return ", "assert ",
-        "fn ", "let ", "pub ", "use ", "struct ", "impl ", "mod ",
-        "const ", "var ", "function ", "if ", "for ", "while ",
-        "=", "(", ")", "{", "}", "[", "]", ";", "->", "=>",
+        "def ",
+        "class ",
+        "import ",
+        "from ",
+        "return ",
+        "assert ",
+        "fn ",
+        "let ",
+        "pub ",
+        "use ",
+        "struct ",
+        "impl ",
+        "mod ",
+        "const ",
+        "var ",
+        "function ",
+        "if ",
+        "for ",
+        "while ",
+        "=",
+        "(",
+        ")",
+        "{",
+        "}",
+        "[",
+        "]",
+        ";",
+        "->",
+        "=>",
     ];
 
     let code_lines = lines
@@ -152,12 +171,18 @@ mod tests {
     #[test]
     fn test_is_not_code_natural_language() {
         let nl = "The database migration requires careful planning.\nWe should verify all constraints before proceeding.";
-        assert!(!is_code_input(nl), "Natural language should NOT be detected as code");
+        assert!(
+            !is_code_input(nl),
+            "Natural language should NOT be detected as code"
+        );
     }
 
     #[test]
     fn test_is_code_mixed() {
         let mixed = "# Verify the implementation\ndef test():\n    assert x > 5\n    assert y == 10\n    return True";
-        assert!(is_code_input(mixed), "Mixed but mostly code should be detected");
+        assert!(
+            is_code_input(mixed),
+            "Mixed but mostly code should be detected"
+        );
     }
 }

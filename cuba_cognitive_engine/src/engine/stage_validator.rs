@@ -26,44 +26,131 @@ pub struct StageAlignmentResult {
 
 /// Stage-specific keyword patterns for content detection.
 const DEFINE_PATTERNS: &[&str] = &[
-    "define", "what is", "concept", "definition", "taxonomy", "classify",
-    "scope", "problem statement", "requirements", "context",
-    "definir", "qué es", "concepto", "definición", "taxonomía",
-    "alcance", "requisitos", "contexto",
+    "define",
+    "what is",
+    "concept",
+    "definition",
+    "taxonomy",
+    "classify",
+    "scope",
+    "problem statement",
+    "requirements",
+    "context",
+    "definir",
+    "qué es",
+    "concepto",
+    "definición",
+    "taxonomía",
+    "alcance",
+    "requisitos",
+    "contexto",
 ];
 
 const RESEARCH_PATTERNS: &[&str] = &[
-    "research", "investigate", "literature", "survey", "compare",
-    "benchmark", "study", "existing", "prior work", "state of the art",
-    "investigar", "literatura", "comparar", "estudio", "existente",
+    "research",
+    "investigate",
+    "literature",
+    "survey",
+    "compare",
+    "benchmark",
+    "study",
+    "existing",
+    "prior work",
+    "state of the art",
+    "investigar",
+    "literatura",
+    "comparar",
+    "estudio",
+    "existente",
 ];
 
 const ANALYZE_PATTERNS: &[&str] = &[
-    "analyze", "breakdown", "decompose", "inspect", "examine",
-    "root cause", "trace", "debug", "dissect", "pattern",
-    "analizar", "descomponer", "inspeccionar", "examinar",
-    "causa raíz", "trazar", "depurar", "patrón",
+    "analyze",
+    "breakdown",
+    "decompose",
+    "inspect",
+    "examine",
+    "root cause",
+    "trace",
+    "debug",
+    "dissect",
+    "pattern",
+    "analizar",
+    "descomponer",
+    "inspeccionar",
+    "examinar",
+    "causa raíz",
+    "trazar",
+    "depurar",
+    "patrón",
 ];
 
 const HYPOTHESIZE_PATTERNS: &[&str] = &[
-    "hypothesis", "assume", "propose", "predict", "if", "then",
-    "expect", "conjecture", "theory", "suppose",
-    "hipótesis", "asumir", "proponer", "predecir", "si", "entonces",
-    "conjetura", "teoría", "suponer",
+    "hypothesis",
+    "assume",
+    "propose",
+    "predict",
+    "if",
+    "then",
+    "expect",
+    "conjecture",
+    "theory",
+    "suppose",
+    "hipótesis",
+    "asumir",
+    "proponer",
+    "predecir",
+    "si",
+    "entonces",
+    "conjetura",
+    "teoría",
+    "suponer",
 ];
 
 const VERIFY_PATTERNS: &[&str] = &[
-    "verify", "test", "assert", "validate", "check", "confirm",
-    "prove", "disprove", "evidence", "measure", "experiment",
-    "verificar", "probar", "validar", "comprobar", "confirmar",
-    "demostrar", "evidencia", "medir", "experimento",
+    "verify",
+    "test",
+    "assert",
+    "validate",
+    "check",
+    "confirm",
+    "prove",
+    "disprove",
+    "evidence",
+    "measure",
+    "experiment",
+    "verificar",
+    "probar",
+    "validar",
+    "comprobar",
+    "confirmar",
+    "demostrar",
+    "evidencia",
+    "medir",
+    "experimento",
 ];
 
 const SYNTHESIZE_PATTERNS: &[&str] = &[
-    "synthesize", "conclude", "summary", "therefore", "recommend",
-    "final", "decision", "integrate", "consolidate", "lesson",
-    "sintetizar", "concluir", "resumen", "por lo tanto", "recomendar",
-    "final", "decisión", "integrar", "consolidar", "lección",
+    "synthesize",
+    "conclude",
+    "summary",
+    "therefore",
+    "recommend",
+    "final",
+    "decision",
+    "integrate",
+    "consolidate",
+    "lesson",
+    "sintetizar",
+    "concluir",
+    "resumen",
+    "por lo tanto",
+    "recomendar",
+    "final",
+    "decisión",
+    "integrar",
+    "consolidar",
+    "lección",
 ];
 
 /// Validate that thought content matches its declared stage.
@@ -75,12 +162,30 @@ pub fn validate_stage_alignment(
 
     // Count matches for each stage
     let scores = [
-        (CognitiveStage::Define, count_matches(&lower, DEFINE_PATTERNS)),
-        (CognitiveStage::Research, count_matches(&lower, RESEARCH_PATTERNS)),
-        (CognitiveStage::Analyze, count_matches(&lower, ANALYZE_PATTERNS)),
-        (CognitiveStage::Hypothesize, count_matches(&lower, HYPOTHESIZE_PATTERNS)),
-        (CognitiveStage::Verify, count_matches(&lower, VERIFY_PATTERNS)),
-        (CognitiveStage::Synthesize, count_matches(&lower, SYNTHESIZE_PATTERNS)),
+        (
+            CognitiveStage::Define,
+            count_matches(&lower, DEFINE_PATTERNS),
+        ),
+        (
+            CognitiveStage::Research,
+            count_matches(&lower, RESEARCH_PATTERNS),
+        ),
+        (
+            CognitiveStage::Analyze,
+            count_matches(&lower, ANALYZE_PATTERNS),
+        ),
+        (
+            CognitiveStage::Hypothesize,
+            count_matches(&lower, HYPOTHESIZE_PATTERNS),
+        ),
+        (
+            CognitiveStage::Verify,
+            count_matches(&lower, VERIFY_PATTERNS),
+        ),
+        (
+            CognitiveStage::Synthesize,
+            count_matches(&lower, SYNTHESIZE_PATTERNS),
+        ),
     ];
 
     // Find the stage with most matches
@@ -95,10 +200,7 @@ pub fn validate_stage_alignment(
         };
     }
 
-    let (detected_stage, detected_count) = scores
-        .iter()
-        .max_by_key(|(_, c)| *c)
-        .unwrap();
+    let (detected_stage, detected_count) = scores.iter().max_by_key(|(_, c)| *c).unwrap();
 
     // Declared stage match count
     let declared_count = scores
@@ -148,10 +250,7 @@ fn count_matches(text: &str, patterns: &[&str]) -> usize {
 /// - Conclusion support (30%): draws conclusions with "therefore", "thus"
 /// - Backward reference (20%): explicitly references prior thought number
 /// - No logic gaps (20%): absence of hand-waving indicators
-pub fn validate_logical_validity(
-    thought: &str,
-    thought_number: usize,
-) -> (f64, Option<String>) {
+pub fn validate_logical_validity(thought: &str, thought_number: usize) -> (f64, Option<String>) {
     // First 2 thoughts get a pass — no prior context to validate against
     if thought_number <= 2 {
         return (0.5, None);
@@ -162,9 +261,18 @@ pub fn validate_logical_validity(
 
     // D1: Premise reference (30%)
     let premise_markers = [
-        "since", "because", "given that", "from", "as shown",
-        "based on", "according to", "following from", "considering",
-        "building on", "extending", "as established",
+        "since",
+        "because",
+        "given that",
+        "from",
+        "as shown",
+        "based on",
+        "according to",
+        "following from",
+        "considering",
+        "building on",
+        "extending",
+        "as established",
     ];
     if premise_markers.iter().any(|m| lower.contains(m)) {
         validity += 0.30;
@@ -172,9 +280,18 @@ pub fn validate_logical_validity(
 
     // D2: Conclusion support (30%)
     let conclusion_markers = [
-        "therefore", "thus", "this means", "which implies", "so ",
-        "hence", "consequently", "we can conclude", "it follows",
-        "this confirms", "this shows", "this demonstrates",
+        "therefore",
+        "thus",
+        "this means",
+        "which implies",
+        "so ",
+        "hence",
+        "consequently",
+        "we can conclude",
+        "it follows",
+        "this confirms",
+        "this shows",
+        "this demonstrates",
     ];
     if conclusion_markers.iter().any(|m| lower.contains(m)) {
         validity += 0.30;
@@ -193,8 +310,13 @@ pub fn validate_logical_validity(
 
     // D4: No logic gaps (20%) — absence of hand-waving
     let gap_indicators = [
-        "somehow", "magically", "just works", "obviously",
-        "clearly", "trivially", "simply put",
+        "somehow",
+        "magically",
+        "just works",
+        "obviously",
+        "clearly",
+        "trivially",
+        "simply put",
     ];
     if !gap_indicators.iter().any(|m| lower.contains(m)) {
         validity += 0.20;
@@ -222,7 +344,11 @@ mod tests {
             "Let me define the problem scope and context requirements for this system",
             CognitiveStage::Define,
         );
-        assert!(result.alignment >= 0.5, "Define content should align with Define stage: {:.2}", result.alignment);
+        assert!(
+            result.alignment >= 0.5,
+            "Define content should align with Define stage: {:.2}",
+            result.alignment
+        );
         assert!(result.warning.is_none());
     }
 
@@ -232,7 +358,11 @@ mod tests {
             "I will verify this hypothesis by testing the assert statements and checking the evidence",
             CognitiveStage::Verify,
         );
-        assert!(result.alignment >= 0.5, "Verify content should align with Verify stage: {:.2}", result.alignment);
+        assert!(
+            result.alignment >= 0.5,
+            "Verify content should align with Verify stage: {:.2}",
+            result.alignment
+        );
     }
 
     #[test]
@@ -241,16 +371,20 @@ mod tests {
             "Let me verify and test each assertion. Check the evidence and confirm the results.",
             CognitiveStage::Define,
         );
-        assert!(result.alignment < 0.8, "Verify content should NOT align with Define stage: {:.2}", result.alignment);
+        assert!(
+            result.alignment < 0.8,
+            "Verify content should NOT align with Define stage: {:.2}",
+            result.alignment
+        );
     }
 
     #[test]
     fn test_no_patterns_neutral() {
-        let result = validate_stage_alignment(
-            "x = 42; y = x * 2",
-            CognitiveStage::Analyze,
+        let result = validate_stage_alignment("x = 42; y = x * 2", CognitiveStage::Analyze);
+        assert_eq!(
+            result.alignment, 0.5,
+            "No patterns should give neutral alignment"
         );
-        assert_eq!(result.alignment, 0.5, "No patterns should give neutral alignment");
     }
 
     #[test]
@@ -269,6 +403,10 @@ mod tests {
             "Vamos a verificar y validar esta hipótesis. Comprobar la evidencia es necesario.",
             CognitiveStage::Verify,
         );
-        assert!(result.alignment >= 0.5, "Spanish patterns should match: {:.2}", result.alignment);
+        assert!(
+            result.alignment >= 0.5,
+            "Spanish patterns should match: {:.2}",
+            result.alignment
+        );
     }
 }

@@ -171,11 +171,7 @@ impl ThoughtGraph {
             on_stack.insert(start_node);
 
             while let Some((node, child_idx)) = work.last_mut() {
-                let children: Vec<usize> = self
-                    .edges
-                    .get(node)
-                    .cloned()
-                    .unwrap_or_default();
+                let children: Vec<usize> = self.edges.get(node).cloned().unwrap_or_default();
 
                 if *child_idx < children.len() {
                     let child = children[*child_idx];
@@ -416,7 +412,8 @@ mod tests {
         graph.add_edge(1, 3); // 1 → 3
         graph.add_edge(2, 1); // 2 → 1 (convergence: node 1 reachable via 0→1 AND 0→2→1)
         assert_eq!(
-            graph.max_depth(), 4,
+            graph.max_depth(),
+            4,
             "Longest path 0→2→1→3 should give depth 4, not 3"
         );
     }
@@ -448,7 +445,10 @@ mod tests {
         graph.add_edge(1, 2);
         graph.add_edge(2, 3);
         graph.add_edge(3, 4);
-        assert!(graph.detect_cycles().is_empty(), "Linear DAG should have no cycles");
+        assert!(
+            graph.detect_cycles().is_empty(),
+            "Linear DAG should have no cycles"
+        );
         assert!(!graph.has_cycles());
     }
 

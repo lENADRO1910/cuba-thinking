@@ -115,13 +115,16 @@ pub fn verify_thought(
 
     // ─── Compute Trust Score ─────────────────────────────────────
     let trust_score = compute_trust_score(
-        quality, warmup_suppressed, evidence_strength,
-        grounding_ratio, confidence_calibrated, ewma_above_threshold,
+        quality,
+        warmup_suppressed,
+        evidence_strength,
+        grounding_ratio,
+        confidence_calibrated,
+        ewma_above_threshold,
     );
 
     // ─── Should Reject? ──────────────────────────────────────────
-    let should_reject = !ctx.is_warmup
-        && (!ewma_above_threshold || trust_score < 0.25);
+    let should_reject = !ctx.is_warmup && (!ewma_above_threshold || trust_score < 0.25);
 
     HallucinationVerdict {
         trust_score,
@@ -145,7 +148,11 @@ pub fn verify_thought(
 // ─── Layer Helpers (CC=1-2 each) ─────────────────────────────────
 
 /// L1: Flag excessive unverified assumptions.
-fn check_assumption_layer(ctx: &VerifyContext, assumption_count: usize, warnings: &mut Vec<String>) {
+fn check_assumption_layer(
+    ctx: &VerifyContext,
+    assumption_count: usize,
+    warnings: &mut Vec<String>,
+) {
     if assumption_count > 5 && !ctx.is_warmup {
         warnings.push(format!(
             "⚠️ L1: {} unverified assumptions — consider verifying the most critical ones",
@@ -167,7 +174,8 @@ fn check_confidence_layer(ctx: &VerifyContext, warnings: &mut Vec<String>) {
 fn check_cove_layer(ctx: &VerifyContext, cove_passed: bool, warnings: &mut Vec<String>) {
     if !cove_passed && !ctx.is_warmup && ctx.thought_number > 3 {
         warnings.push(
-            "⚠️ L3 CoVe: Reasoning lacks cross-verification — add self-validation of claims".to_string(),
+            "⚠️ L3 CoVe: Reasoning lacks cross-verification — add self-validation of claims"
+                .to_string(),
         );
     }
 }
@@ -183,7 +191,12 @@ fn check_evidence_layer(ctx: &VerifyContext, evidence_strength: f64, warnings: &
 }
 
 /// L6: Source grounding ratio check.
-fn check_grounding_layer(ctx: &VerifyContext, grounding_ratio: f64, claim_count: usize, warnings: &mut Vec<String>) {
+fn check_grounding_layer(
+    ctx: &VerifyContext,
+    grounding_ratio: f64,
+    claim_count: usize,
+    warnings: &mut Vec<String>,
+) {
     if grounding_ratio < 0.5 && claim_count > 2 && !ctx.is_warmup {
         warnings.push(format!(
             "🔍 L6: Only {:.0}% of {} claims are grounded — verify ungrounded assertions",
@@ -222,7 +235,8 @@ fn check_contradiction_layer(ctx: &VerifyContext, warnings: &mut Vec<String>) ->
 
 /// G4: Reward gaming detection (Everitt 2021).
 fn check_gaming_layer(ctx: &VerifyContext, evidence_strength: f64, warnings: &mut Vec<String>) {
-    if !ctx.is_warmup && ctx.thought_number > 2
+    if !ctx.is_warmup
+        && ctx.thought_number > 2
         && detect_reward_gaming(ctx.thought, ctx.quality, evidence_strength)
     {
         warnings.push(
@@ -233,7 +247,11 @@ fn check_gaming_layer(ctx: &VerifyContext, evidence_strength: f64, warnings: &mu
 }
 
 /// R10: Anti-overthinking (stagnation + fatigue). Returns `should_early_stop`.
-fn check_overthinking_layer(ewma: &mut EwmaTracker, is_warmup: bool, warnings: &mut Vec<String>) -> bool {
+fn check_overthinking_layer(
+    ewma: &mut EwmaTracker,
+    is_warmup: bool,
+    warnings: &mut Vec<String>,
+) -> bool {
     let is_stagnating = ewma.is_stagnating();
     let is_fatigued = ewma.is_fatigued();
 
@@ -280,23 +298,35 @@ fn compute_trust_score(
 fn compute_evidence_strength(text: &str) -> f64 {
     let lower = text.to_lowercase();
     let mut score = 0.0_f64;
-    
+
     // Has specific numbers (quantitative evidence)
     if text.chars().any(|c| c.is_ascii_digit()) {
         score += 0.25;
     }
-    
+
     // Has measurement units
-    let units = ["ms", "kb", "mb", "gb", "sec", "min", "loc", "%", "rpm", "mm", "kg"];
+    let units = [
+        "ms", "kb", "mb", "gb", "sec", "min", "loc", "%", "rpm", "mm", "kg",
+    ];
     if units.iter().any(|u| lower.contains(u)) {
         score += 0.20;
     }
-    
+
     // Has citations or references
     let refs = [
-        "according to", "based on", "source:", "reference:",
-        "measured", "benchmark", "tested", "empirir",
-        "según", "basado en", "fuente:", "medido", "probado",
+        "according to",
+        "based on",
+        "source:",
+        "reference:",
+        "measured",
+        "benchmark",
+        "tested",
+        "empirir",
+        "según",
+        "basado en",
+        "fuente:",
+        "medido",
+        "probado",
     ];
     if refs.iter().any(|r| lower.contains(r)) {
         score += 0.30;
@@ -306,16 +336,21 @@ fn compute_evidence_strength(text: &str) -> f64 {
     if text.contains('`') || text.contains("```") {
         score += 0.15;
     }
-    
+
     // Penalty for pure opinion
     let opinion = [
-        "i think", "i believe", "in my opinion", "probably",
-        "creo que", "en mi opinión", "probablemente",
+        "i think",
+        "i believe",
+        "in my opinion",
+        "probably",
+        "creo que",
+        "en mi opinión",
+        "probablemente",
     ];
     if opinion.iter().any(|o| lower.contains(o)) {
         score -= 0.10;
     }
-    
+
     score.clamp(0.0, 1.0)
 }
 
@@ -331,12 +366,18 @@ fn count_verifiable_claims(text: &str) -> usize {
         .filter(|s| {
             let lower = s.to_lowercase();
             // A claim has an assertion verb AND a subject
-            (lower.contains(" is ") || lower.contains(" are ")
-                || lower.contains(" was ") || lower.contains(" will ")
-                || lower.contains(" must ") || lower.contains(" should ")
-                || lower.contains(" causes ") || lower.contains(" requires ")
-                || lower.contains(" es ") || lower.contains(" son ")
-                || lower.contains(" debe ") || lower.contains(" requiere "))
+            (lower.contains(" is ")
+                || lower.contains(" are ")
+                || lower.contains(" was ")
+                || lower.contains(" will ")
+                || lower.contains(" must ")
+                || lower.contains(" should ")
+                || lower.contains(" causes ")
+                || lower.contains(" requires ")
+                || lower.contains(" es ")
+                || lower.contains(" son ")
+                || lower.contains(" debe ")
+                || lower.contains(" requiere "))
                 && s.len() > 20
         })
         .count()
@@ -365,17 +406,45 @@ fn compute_grounding_ratio(text: &str, total_claims: usize) -> f64 {
     }
 
     let grounding_markers = [
-        "because", "since", "according to", "based on",
-        "measured", "tested", "documentation", "spec",
-        "isbn", "rfc", "iso", "doi", "arxiv", "github",
-        "shows that", "proven by", "verified", "confirmed by",
-        "porque", "según", "basado en", "documentación",
+        "because",
+        "since",
+        "according to",
+        "based on",
+        "measured",
+        "tested",
+        "documentation",
+        "spec",
+        "isbn",
+        "rfc",
+        "iso",
+        "doi",
+        "arxiv",
+        "github",
+        "shows that",
+        "proven by",
+        "verified",
+        "confirmed by",
+        "porque",
+        "según",
+        "basado en",
+        "documentación",
     ];
 
     let claim_verbs = [
-        " is ", " are ", " was ", " will ", " must ", " should ",
-        " causes ", " requires ", " prevents ", " ensures ",
-        " es ", " son ", " debe ", " requiere ",
+        " is ",
+        " are ",
+        " was ",
+        " will ",
+        " must ",
+        " should ",
+        " causes ",
+        " requires ",
+        " prevents ",
+        " ensures ",
+        " es ",
+        " son ",
+        " debe ",
+        " requiere ",
     ];
 
     // Identify claim-sentences and check proximity grounding
@@ -408,7 +477,12 @@ fn compute_grounding_ratio(text: &str, total_claims: usize) -> f64 {
 
     // Prefer sentence-level detected claims as denominator (more accurate).
     // Fall back to caller's total_claims if no sentence-level claims found.
-    let denominator = if detected_claims > 0 { detected_claims } else { total_claims }.max(1);
+    let denominator = if detected_claims > 0 {
+        detected_claims
+    } else {
+        total_claims
+    }
+    .max(1);
     (grounded_claims as f64 / denominator as f64).min(1.0)
 }
 
@@ -436,14 +510,34 @@ fn check_cove_structure(thought: &str, thought_number: usize) -> bool {
 
     // CoVe markers: self-verification phrases
     let cove_markers = [
-        "let me verify", "to verify", "checking", "confirmed",
-        "cross-reference", "double-check", "validates", "consistent with",
-        "as expected", "this confirms", "which means", "therefore",
-        "assert", "ensures", "proven", "tested", "matching",
+        "let me verify",
+        "to verify",
+        "checking",
+        "confirmed",
+        "cross-reference",
+        "double-check",
+        "validates",
+        "consistent with",
+        "as expected",
+        "this confirms",
+        "which means",
+        "therefore",
+        "assert",
+        "ensures",
+        "proven",
+        "tested",
+        "matching",
         // Spanish
-        "verificar", "confirmar", "comprobar", "validar",
-        "consistente con", "como se esperaba", "esto confirma",
-        "por lo tanto", "lo que significa", "lo cual demuestra",
+        "verificar",
+        "confirmar",
+        "comprobar",
+        "validar",
+        "consistente con",
+        "como se esperaba",
+        "esto confirma",
+        "por lo tanto",
+        "lo que significa",
+        "lo cual demuestra",
     ];
 
     let keyword_count = cove_markers.iter().filter(|m| lower.contains(**m)).count();
@@ -451,13 +545,23 @@ fn check_cove_structure(thought: &str, thought_number: usize) -> bool {
     // V7 (P3-B): Detect verification questions (CoVe step 2-3).
     // Questions near verification context indicate self-questioning.
     let question_markers = [
-        "does this", "is this", "can we", "have we", "should we",
-        "what if", "why does", "how does", "are we sure",
-        "¿es correcto", "¿funciona", "¿podemos", "¿estamos seguros",
+        "does this",
+        "is this",
+        "can we",
+        "have we",
+        "should we",
+        "what if",
+        "why does",
+        "how does",
+        "are we sure",
+        "¿es correcto",
+        "¿funciona",
+        "¿podemos",
+        "¿estamos seguros",
     ];
     let has_question = thought.contains('?');
-    let has_verification_question = has_question
-        && question_markers.iter().any(|m| lower.contains(m));
+    let has_verification_question =
+        has_question && question_markers.iter().any(|m| lower.contains(m));
 
     // Scoring: keywords + question bonus
     let cove_score = keyword_count + if has_verification_question { 2 } else { 0 };
@@ -503,8 +607,13 @@ fn detect_reward_gaming(thought: &str, quality: &QualityScores, evidence_strengt
 
     // Heuristic 3: Grounding marker stuffing in tiny text
     let grounding_markers = [
-        "according to", "verified", "confirmed", "research shows",
-        "data shows", "evidence indicates", "measured",
+        "according to",
+        "verified",
+        "confirmed",
+        "research shows",
+        "data shows",
+        "evidence indicates",
+        "measured",
     ];
     let marker_count = grounding_markers
         .iter()
@@ -530,13 +639,15 @@ fn detect_reward_gaming(thought: &str, quality: &QualityScores, evidence_strengt
     // When all 6 quality dimensions are suspiciously uniform AND high,
     // the model likely optimized metrics without genuine substance.
     let scores = [
-        quality.depth, quality.logic, quality.clarity,
-        quality.breadth, quality.relevance, quality.actionability,
+        quality.depth,
+        quality.logic,
+        quality.clarity,
+        quality.breadth,
+        quality.relevance,
+        quality.actionability,
     ];
     let mean = scores.iter().sum::<f64>() / scores.len() as f64;
-    let variance = scores.iter()
-        .map(|s| (s - mean).powi(2))
-        .sum::<f64>() / scores.len() as f64;
+    let variance = scores.iter().map(|s| (s - mean).powi(2)).sum::<f64>() / scores.len() as f64;
     if mean > 0.88 && variance < 0.005 {
         return true; // Suspiciously uniform high scores
     }
@@ -606,7 +717,11 @@ mod tests {
 
         let verdict = verify_thought(
             "I think maybe the approach could potentially work somehow",
-            &session, &quality, &mut ewma, 0.5, 5,
+            &session,
+            &quality,
+            &mut ewma,
+            0.5,
+            5,
         );
         // Should have low evidence strength
         assert!(verdict.layers.evidence_strength < 0.3);
@@ -616,7 +731,7 @@ mod tests {
     fn test_high_evidence_strength() {
         let strength = compute_evidence_strength(
             "According to the benchmark, query takes 250ms with 95th percentile at 500ms. \
-             Based on PostgreSQL documentation, EXPLAIN shows sequential scan."
+             Based on PostgreSQL documentation, EXPLAIN shows sequential scan.",
         );
         assert!(strength > 0.5, "Expected high evidence: {:.2}", strength);
     }
@@ -626,7 +741,7 @@ mod tests {
         let claims = count_verifiable_claims(
             "PostgreSQL is faster than MySQL for complex queries. \
              The index must be created on the user_id column. \
-             This approach requires careful testing."
+             This approach requires careful testing.",
         );
         assert!(claims >= 2, "Expected >=2 claims, got {}", claims);
     }
@@ -645,19 +760,30 @@ mod tests {
     fn test_reject_on_low_ewma() {
         let session = make_test_session();
         let quality = QualityScores {
-            clarity: 0.1, depth: 0.1, breadth: 0.1,
-            logic: 0.1, relevance: 0.1, actionability: 0.1,
+            clarity: 0.1,
+            depth: 0.1,
+            breadth: 0.1,
+            logic: 0.1,
+            relevance: 0.1,
+            actionability: 0.1,
         };
         let mut ewma = EwmaTracker::new(BudgetMode::Balanced);
         // Push EWMA below threshold
         for _ in 0..10 {
             ewma.update(&crate::engine::ewma_reward::RewardSignals {
-                quality: 0.05, faithfulness: 0.1, coherence: 0.1,
-                contradiction_rate: 0.5, info_gain: 0.0, grounding: 0.0,
+                quality: 0.05,
+                faithfulness: 0.1,
+                coherence: 0.1,
+                contradiction_rate: 0.5,
+                info_gain: 0.0,
+                grounding: 0.0,
             });
         }
         let verdict = verify_thought("bad thought", &session, &quality, &mut ewma, 0.5, 5);
-        assert!(verdict.should_reject, "Should reject when EWMA is below threshold");
+        assert!(
+            verdict.should_reject,
+            "Should reject when EWMA is below threshold"
+        );
     }
 
     // ─── FIX-3: Variance Gaming Detection Test ───────
@@ -665,17 +791,32 @@ mod tests {
     fn test_detect_reward_gaming_uniform_high_scores() {
         // Suspiciously uniform and high scores across all dimensions
         let quality = QualityScores {
-            clarity: 0.92, depth: 0.91, breadth: 0.93,
-            logic: 0.92, relevance: 0.91, actionability: 0.90,
+            clarity: 0.92,
+            depth: 0.91,
+            breadth: 0.93,
+            logic: 0.92,
+            relevance: 0.91,
+            actionability: 0.90,
         };
-        let values = [quality.clarity, quality.depth, quality.breadth,
-                      quality.logic, quality.relevance, quality.actionability];
+        let values = [
+            quality.clarity,
+            quality.depth,
+            quality.breadth,
+            quality.logic,
+            quality.relevance,
+            quality.actionability,
+        ];
         let mean: f64 = values.iter().sum::<f64>() / values.len() as f64;
-        let variance: f64 = values.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / values.len() as f64;
+        let variance: f64 =
+            values.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / values.len() as f64;
 
         // Verify the condition from FIX-3a: mean > 0.88 AND variance < 0.005
         assert!(mean > 0.88, "Mean should be suspiciously high: {:.3}", mean);
-        assert!(variance < 0.005, "Variance should be suspiciously low: {:.6}", variance);
+        assert!(
+            variance < 0.005,
+            "Variance should be suspiciously low: {:.6}",
+            variance
+        );
     }
 
     // ─── L4: Pareto Frontier L2 Norm Test ──────────────
@@ -685,30 +826,51 @@ mod tests {
 
         // Gaming: d²+c² = 0.96²+0.95² = 0.9216+0.9025 = 1.8241 > 1.65
         let gaming_quality = QualityScores {
-            depth: 0.96, clarity: 0.95,
-            breadth: 0.60, logic: 0.60,
-            relevance: 0.60, actionability: 0.60,
+            depth: 0.96,
+            clarity: 0.95,
+            breadth: 0.60,
+            logic: 0.60,
+            relevance: 0.60,
+            actionability: 0.60,
         };
         let pareto = gaming_quality.depth.powi(2) + gaming_quality.clarity.powi(2);
-        assert!(pareto > 1.65, "Gaming should exceed L2 threshold: {:.3}", pareto);
+        assert!(
+            pareto > 1.65,
+            "Gaming should exceed L2 threshold: {:.3}",
+            pareto
+        );
 
         // Exploit that bypassed v2 product: clarity=1.0, depth=0.89 → product=0.89 < 0.90
         // But L2 norm: 1.0² + 0.89² = 1.7921 > 1.65 → caught!
         let exploit_quality = QualityScores {
-            depth: 0.89, clarity: 1.0,
-            breadth: 0.60, logic: 0.60,
-            relevance: 0.60, actionability: 0.60,
+            depth: 0.89,
+            clarity: 1.0,
+            breadth: 0.60,
+            logic: 0.60,
+            relevance: 0.60,
+            actionability: 0.60,
         };
         let exploit_pareto = exploit_quality.depth.powi(2) + exploit_quality.clarity.powi(2);
-        assert!(exploit_pareto > 1.65, "v2 exploit should now be caught: {:.3}", exploit_pareto);
+        assert!(
+            exploit_pareto > 1.65,
+            "v2 exploit should now be caught: {:.3}",
+            exploit_pareto
+        );
 
         // Genuine text should NOT trigger (depth and clarity are naturally antagonistic)
         let genuine_quality = QualityScores {
-            depth: 0.88, clarity: 0.90,
-            breadth: 0.70, logic: 0.75,
-            relevance: 0.80, actionability: 0.65,
+            depth: 0.88,
+            clarity: 0.90,
+            breadth: 0.70,
+            logic: 0.75,
+            relevance: 0.80,
+            actionability: 0.65,
         };
         let genuine_pareto = genuine_quality.depth.powi(2) + genuine_quality.clarity.powi(2);
-        assert!(genuine_pareto < 1.65, "Genuine should NOT exceed threshold: {:.3}", genuine_pareto);
+        assert!(
+            genuine_pareto < 1.65,
+            "Genuine should NOT exceed threshold: {:.3}",
+            genuine_pareto
+        );
     }
 }

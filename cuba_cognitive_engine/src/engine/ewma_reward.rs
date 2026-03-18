@@ -73,7 +73,14 @@ impl RewardSignals {
     /// G6: Applies redundancy penalty when info_gain is near-zero
     /// (ROSCOE, Golovneva 2023; ReasonEval 2024).
     pub fn composite(&self) -> f64 {
-        let priors = [W_QUALITY, W_COHERENCE, W_CONTRADICTION, W_FAITHFULNESS, W_INFO_GAIN, W_GROUNDING];
+        let priors = [
+            W_QUALITY,
+            W_COHERENCE,
+            W_CONTRADICTION,
+            W_FAITHFULNESS,
+            W_INFO_GAIN,
+            W_GROUNDING,
+        ];
         self.composite_dynamic(&priors, SOFTMAX_TAU)
     }
 
@@ -104,7 +111,14 @@ impl RewardSignals {
                 0.05, // -0.05 info_gain: less novelty pressure
                 0.20, // +0.10 grounding: demand evidence
             ],
-            _ => [W_QUALITY, W_COHERENCE, W_CONTRADICTION, W_FAITHFULNESS, W_INFO_GAIN, W_GROUNDING],
+            _ => [
+                W_QUALITY,
+                W_COHERENCE,
+                W_CONTRADICTION,
+                W_FAITHFULNESS,
+                W_INFO_GAIN,
+                W_GROUNDING,
+            ],
         };
         self.composite_dynamic(&priors, SOFTMAX_TAU)
     }
@@ -419,13 +433,13 @@ impl EwmaTracker {
         const EPSILON: f64 = 1e-5;
         let n = self.reward_history.len() as f64;
 
-        let (weight_sum, inv_sum) = self.reward_history
-            .iter()
-            .enumerate()
-            .fold((0.0_f64, 0.0_f64), |(ws, is), (i, &reward)| {
+        let (weight_sum, inv_sum) = self.reward_history.iter().enumerate().fold(
+            (0.0_f64, 0.0_f64),
+            |(ws, is), (i, &reward)| {
                 let w = 1.0 + 0.5 * (i as f64 / n);
                 (ws + w, is + w / reward.max(EPSILON))
-            });
+            },
+        );
 
         if inv_sum > 0.0 {
             (weight_sum / inv_sum).clamp(0.0, 1.0)
@@ -452,7 +466,11 @@ mod tests {
             ..Default::default()
         };
         let new_val = tracker.update(&signals);
-        assert!(new_val > 0.5, "EWMA should increase with good signals: {}", new_val);
+        assert!(
+            new_val > 0.5,
+            "EWMA should increase with good signals: {}",
+            new_val
+        );
     }
 
     #[test]
@@ -483,7 +501,10 @@ mod tests {
         for _ in 0..10 {
             tracker.update(&bad_signals);
         }
-        assert!(tracker.below_threshold(), "EWMA should be below threshold after 10 bad steps");
+        assert!(
+            tracker.below_threshold(),
+            "EWMA should be below threshold after 10 bad steps"
+        );
     }
 
     #[test]
@@ -493,37 +514,56 @@ mod tests {
         for _ in 0..5 {
             tracker.update(&same_signals);
         }
-        assert!(tracker.is_stagnating(), "Should detect stagnation with identical inputs");
+        assert!(
+            tracker.is_stagnating(),
+            "Should detect stagnation with identical inputs"
+        );
     }
 
     #[test]
     fn test_fatigue_detection() {
         let mut tracker = EwmaTracker::new(BudgetMode::Balanced);
         // V9: Use realistic signals that produce decreasing composites
-        // under Softmax. info_gain must be non-zero to avoid redundancy 
+        // under Softmax. info_gain must be non-zero to avoid redundancy
         // penalty collapse (multiplier=0.10).
         for q in [0.8, 0.6, 0.4, 0.2] {
             let signals = RewardSignals {
-                quality: q, faithfulness: q, coherence: q,
-                contradiction_rate: 1.0 - q, info_gain: q, grounding: q,
+                quality: q,
+                faithfulness: q,
+                coherence: q,
+                contradiction_rate: 1.0 - q,
+                info_gain: q,
+                grounding: q,
             };
             tracker.update(&signals);
         }
-        assert!(tracker.is_fatigued(), "Should detect fatigue with 4 consecutive drops");
+        assert!(
+            tracker.is_fatigued(),
+            "Should detect fatigue with 4 consecutive drops"
+        );
     }
 
     #[test]
     fn test_composite_reward_priors_sum_to_one() {
-        let total = W_QUALITY + W_COHERENCE + W_CONTRADICTION + W_FAITHFULNESS + W_INFO_GAIN + W_GROUNDING;
-        assert!((total - 1.0).abs() < 1e-10, "Prior weights must sum to 1.0: {}", total);
+        let total =
+            W_QUALITY + W_COHERENCE + W_CONTRADICTION + W_FAITHFULNESS + W_INFO_GAIN + W_GROUNDING;
+        assert!(
+            (total - 1.0).abs() < 1e-10,
+            "Prior weights must sum to 1.0: {}",
+            total
+        );
     }
 
     #[test]
     fn test_softmax_uniform_signals_reproduce_priors() {
         // When all signals are identical, softmax reduces to prior weights.
         let signals = RewardSignals {
-            quality: 0.7, faithfulness: 0.7, coherence: 0.7,
-            contradiction_rate: 0.3, info_gain: 0.7, grounding: 0.7,
+            quality: 0.7,
+            faithfulness: 0.7,
+            coherence: 0.7,
+            contradiction_rate: 0.3,
+            info_gain: 0.7,
+            grounding: 0.7,
         };
         let composite = signals.composite();
         // With uniform signals (all ~0.7), composite should be close to
@@ -531,32 +571,53 @@ mod tests {
         // (minus redundancy penalty for info_gain=0.7)
         let redundancy = (1.0 - (-15.0 * 0.7_f64).exp()).max(0.10);
         let expected = 0.7 * redundancy;
-        assert!((composite - expected).abs() < 0.05,
-            "Uniform signals should approximate prior-weighted sum: got={:.4} expected≈{:.4}", composite, expected);
+        assert!(
+            (composite - expected).abs() < 0.05,
+            "Uniform signals should approximate prior-weighted sum: got={:.4} expected≈{:.4}",
+            composite,
+            expected
+        );
     }
 
     #[test]
     fn test_softmax_anomalous_signal_dominates() {
         // When one signal is anomalously high, it should dominate the composite.
         let normal = RewardSignals {
-            quality: 0.5, faithfulness: 0.5, coherence: 0.5,
-            contradiction_rate: 0.5, info_gain: 0.5, grounding: 0.5,
+            quality: 0.5,
+            faithfulness: 0.5,
+            coherence: 0.5,
+            contradiction_rate: 0.5,
+            info_gain: 0.5,
+            grounding: 0.5,
         };
         let anomalous = RewardSignals {
-            quality: 0.5, faithfulness: 0.5, coherence: 0.5,
-            contradiction_rate: 0.5, info_gain: 0.5, grounding: 0.95,  // Anomalous
+            quality: 0.5,
+            faithfulness: 0.5,
+            coherence: 0.5,
+            contradiction_rate: 0.5,
+            info_gain: 0.5,
+            grounding: 0.95, // Anomalous
         };
         // Anomalous should give more weight to grounding → higher composite
-        assert!(anomalous.composite() > normal.composite(),
+        assert!(
+            anomalous.composite() > normal.composite(),
             "Anomalous signal should increase composite: anom={:.4} > norm={:.4}",
-            anomalous.composite(), normal.composite());
+            anomalous.composite(),
+            normal.composite()
+        );
     }
 
     #[test]
     fn test_best_thought_index() {
         let mut tracker = EwmaTracker::new(BudgetMode::Balanced);
-        let signals_low = RewardSignals { quality: 0.2, ..Default::default() };
-        let signals_high = RewardSignals { quality: 0.9, ..Default::default() };
+        let signals_low = RewardSignals {
+            quality: 0.2,
+            ..Default::default()
+        };
+        let signals_high = RewardSignals {
+            quality: 0.9,
+            ..Default::default()
+        };
         tracker.update(&signals_low);
         tracker.update(&signals_high);
         tracker.update(&signals_low);
@@ -569,40 +630,76 @@ mod tests {
         let mut tracker = EwmaTracker::new(BudgetMode::Balanced);
         // 4 excellent + 1 terrible
         for _ in 0..4 {
-            tracker.update(&RewardSignals { quality: 0.9, faithfulness: 0.9,
-                coherence: 0.9, info_gain: 0.8, grounding: 0.8, ..Default::default() });
+            tracker.update(&RewardSignals {
+                quality: 0.9,
+                faithfulness: 0.9,
+                coherence: 0.9,
+                info_gain: 0.8,
+                grounding: 0.8,
+                ..Default::default()
+            });
         }
-        tracker.update(&RewardSignals { quality: 0.01, faithfulness: 0.01,
-            coherence: 0.01, info_gain: 0.01, grounding: 0.01, ..Default::default() });
+        tracker.update(&RewardSignals {
+            quality: 0.01,
+            faithfulness: 0.01,
+            coherence: 0.01,
+            info_gain: 0.01,
+            grounding: 0.01,
+            ..Default::default()
+        });
 
         let score = tracker.chain_score();
-        assert!(score < 0.3, "Harmonic mean should collapse on bad step: {:.3}", score);
+        assert!(
+            score < 0.3,
+            "Harmonic mean should collapse on bad step: {:.3}",
+            score
+        );
     }
 
     #[test]
     fn test_chain_score_all_good() {
         let mut tracker = EwmaTracker::new(BudgetMode::Balanced);
         for _ in 0..5 {
-            tracker.update(&RewardSignals { quality: 0.7, faithfulness: 0.7,
-                coherence: 0.7, info_gain: 0.7, grounding: 0.7, ..Default::default() });
+            tracker.update(&RewardSignals {
+                quality: 0.7,
+                faithfulness: 0.7,
+                coherence: 0.7,
+                info_gain: 0.7,
+                grounding: 0.7,
+                ..Default::default()
+            });
         }
         let score = tracker.chain_score();
-        assert!(score > 0.5, "All good steps should give healthy chain: {:.3}", score);
+        assert!(
+            score > 0.5,
+            "All good steps should give healthy chain: {:.3}",
+            score
+        );
     }
 
     // ─── FIX-4: Exponential Redundancy Tests ──────────
     #[test]
     fn test_redundancy_continuous_monotonic() {
         // The exponential penalty 1 - e^(-15x) should be continuous and monotonic
-        let values: Vec<f64> = (0..=10).map(|i| {
-            let x = i as f64 * 0.1; // 0.0, 0.1, ... 1.0
-            1.0 - (-15.0 * x).exp()
-        }).collect();
+        let values: Vec<f64> = (0..=10)
+            .map(|i| {
+                let x = i as f64 * 0.1; // 0.0, 0.1, ... 1.0
+                1.0 - (-15.0 * x).exp()
+            })
+            .collect();
         for w in values.windows(2) {
-            assert!(w[1] >= w[0], "Penalty should be monotonic: {} >= {}", w[1], w[0]);
+            assert!(
+                w[1] >= w[0],
+                "Penalty should be monotonic: {} >= {}",
+                w[1],
+                w[0]
+            );
         }
         // At x=0, penalty should be ~0
-        assert!(values[0].abs() < 0.01, "Penalty at 0% redundancy should be ~0");
+        assert!(
+            values[0].abs() < 0.01,
+            "Penalty at 0% redundancy should be ~0"
+        );
         // At x=0.3, penalty should be near saturation (>0.98)
         assert!(values[3] > 0.98, "Penalty at 30% should be near max");
     }
@@ -684,8 +781,12 @@ mod tests {
     fn test_stage_adaptive_weights_sum_to_one() {
         // Verify all stage weight sets sum to 1.0
         let signals = RewardSignals {
-            quality: 1.0, faithfulness: 1.0, coherence: 1.0,
-            contradiction_rate: 0.0, info_gain: 1.0, grounding: 1.0,
+            quality: 1.0,
+            faithfulness: 1.0,
+            coherence: 1.0,
+            contradiction_rate: 0.0,
+            info_gain: 1.0,
+            grounding: 1.0,
         };
         let default = signals.composite();
         let define = signals.composite_for_stage(Some("define"));
@@ -693,16 +794,29 @@ mod tests {
         let none = signals.composite_for_stage(None);
         // All should produce same score when all signals = 1.0
         // (because weights sum to 1.0 regardless of distribution)
-        assert!((default - none).abs() < 1e-10, "None stage should match default");
-        assert!((default - define).abs() < 1e-10, "All-1.0 signals should match regardless of weights");
-        assert!((default - verify).abs() < 1e-10, "All-1.0 signals should match regardless of weights");
+        assert!(
+            (default - none).abs() < 1e-10,
+            "None stage should match default"
+        );
+        assert!(
+            (default - define).abs() < 1e-10,
+            "All-1.0 signals should match regardless of weights"
+        );
+        assert!(
+            (default - verify).abs() < 1e-10,
+            "All-1.0 signals should match regardless of weights"
+        );
     }
 
     #[test]
     fn test_stage_adaptive_define_boosts_quality() {
         let signals = RewardSignals {
-            quality: 0.9, faithfulness: 0.3, coherence: 0.7,
-            contradiction_rate: 0.0, info_gain: 0.8, grounding: 0.3,
+            quality: 0.9,
+            faithfulness: 0.3,
+            coherence: 0.7,
+            contradiction_rate: 0.0,
+            info_gain: 0.8,
+            grounding: 0.3,
         };
         let default_score = signals.composite();
         let define_score = signals.composite_for_stage(Some("define"));
@@ -716,8 +830,12 @@ mod tests {
     #[test]
     fn test_stage_adaptive_verify_boosts_faithfulness() {
         let signals = RewardSignals {
-            quality: 0.4, faithfulness: 0.9, coherence: 0.5,
-            contradiction_rate: 0.0, info_gain: 0.3, grounding: 0.9,
+            quality: 0.4,
+            faithfulness: 0.9,
+            coherence: 0.5,
+            contradiction_rate: 0.0,
+            info_gain: 0.3,
+            grounding: 0.9,
         };
         let default_score = signals.composite();
         let verify_score = signals.composite_for_stage(Some("verify"));

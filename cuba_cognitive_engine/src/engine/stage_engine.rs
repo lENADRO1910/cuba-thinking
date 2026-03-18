@@ -146,28 +146,76 @@ pub fn detect_stage(thought: &str) -> CognitiveStage {
 
     // Check keywords in reverse order (later stages are more specific)
     let synthesize_kw = [
-        "therefore", "in conclusion", "recommend", "summary", "final",
-        "decision", "solution", "result", "conclude", "synthesize",
-        "por lo tanto", "en conclusión", "recomendación", "resumen",
+        "therefore",
+        "in conclusion",
+        "recommend",
+        "summary",
+        "final",
+        "decision",
+        "solution",
+        "result",
+        "conclude",
+        "synthesize",
+        "por lo tanto",
+        "en conclusión",
+        "recomendación",
+        "resumen",
     ];
     let verify_kw = [
-        "verify", "test", "validate", "confirm", "check", "proof",
-        "evidence", "assert", "ensure", "verificar", "comprobar",
+        "verify",
+        "test",
+        "validate",
+        "confirm",
+        "check",
+        "proof",
+        "evidence",
+        "assert",
+        "ensure",
+        "verificar",
+        "comprobar",
     ];
     let hypothesize_kw = [
-        "hypothesis", "propose", "predict", "suggest", "could",
-        "might", "perhaps", "approach", "strategy", "hipótesis",
-        "proponer", "estrategia",
+        "hypothesis",
+        "propose",
+        "predict",
+        "suggest",
+        "could",
+        "might",
+        "perhaps",
+        "approach",
+        "strategy",
+        "hipótesis",
+        "proponer",
+        "estrategia",
     ];
     let analyze_kw = [
-        "analyze", "compare", "trade-off", "evaluate", "examine",
-        "consider", "weigh", "assess", "analizar", "comparar",
-        "evaluar", "pros", "cons",
+        "analyze",
+        "compare",
+        "trade-off",
+        "evaluate",
+        "examine",
+        "consider",
+        "weigh",
+        "assess",
+        "analizar",
+        "comparar",
+        "evaluar",
+        "pros",
+        "cons",
     ];
     let research_kw = [
-        "explore", "investigate", "search", "find", "look into",
-        "gather", "options", "alternatives", "investigar", "explorar",
-        "opciones", "buscar",
+        "explore",
+        "investigate",
+        "search",
+        "find",
+        "look into",
+        "gather",
+        "options",
+        "alternatives",
+        "investigar",
+        "explorar",
+        "opciones",
+        "buscar",
     ];
 
     if synthesize_kw.iter().any(|kw| lower.contains(kw)) {
@@ -318,12 +366,30 @@ mod tests {
 
     #[test]
     fn test_detect_stage_keywords() {
-        assert_eq!(detect_stage("Let me define the problem scope"), CognitiveStage::Define);
-        assert_eq!(detect_stage("I need to explore options"), CognitiveStage::Research);
-        assert_eq!(detect_stage("Let me compare the trade-offs"), CognitiveStage::Analyze);
-        assert_eq!(detect_stage("I propose the following approach"), CognitiveStage::Hypothesize);
-        assert_eq!(detect_stage("Let me verify this assumption"), CognitiveStage::Verify);
-        assert_eq!(detect_stage("In conclusion, the best solution is"), CognitiveStage::Synthesize);
+        assert_eq!(
+            detect_stage("Let me define the problem scope"),
+            CognitiveStage::Define
+        );
+        assert_eq!(
+            detect_stage("I need to explore options"),
+            CognitiveStage::Research
+        );
+        assert_eq!(
+            detect_stage("Let me compare the trade-offs"),
+            CognitiveStage::Analyze
+        );
+        assert_eq!(
+            detect_stage("I propose the following approach"),
+            CognitiveStage::Hypothesize
+        );
+        assert_eq!(
+            detect_stage("Let me verify this assumption"),
+            CognitiveStage::Verify
+        );
+        assert_eq!(
+            detect_stage("In conclusion, the best solution is"),
+            CognitiveStage::Synthesize
+        );
     }
 
     #[test]

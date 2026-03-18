@@ -56,12 +56,27 @@ pub fn format_engine_output(
     // ─── Quality Dimensions (only flag weak ones) ────────────────
     let weak_threshold = 0.4;
     let mut weak_dims = Vec::new();
-    if quality.clarity < weak_threshold { weak_dims.push(format!("Clarity {:.0}%", quality.clarity * 100.0)); }
-    if quality.depth < weak_threshold { weak_dims.push(format!("Depth {:.0}%", quality.depth * 100.0)); }
-    if quality.breadth < weak_threshold { weak_dims.push(format!("Breadth {:.0}%", quality.breadth * 100.0)); }
-    if quality.logic < weak_threshold { weak_dims.push(format!("Logic {:.0}%", quality.logic * 100.0)); }
-    if quality.relevance < weak_threshold { weak_dims.push(format!("Relevance {:.0}%", quality.relevance * 100.0)); }
-    if quality.actionability < weak_threshold { weak_dims.push(format!("Actionability {:.0}%", quality.actionability * 100.0)); }
+    if quality.clarity < weak_threshold {
+        weak_dims.push(format!("Clarity {:.0}%", quality.clarity * 100.0));
+    }
+    if quality.depth < weak_threshold {
+        weak_dims.push(format!("Depth {:.0}%", quality.depth * 100.0));
+    }
+    if quality.breadth < weak_threshold {
+        weak_dims.push(format!("Breadth {:.0}%", quality.breadth * 100.0));
+    }
+    if quality.logic < weak_threshold {
+        weak_dims.push(format!("Logic {:.0}%", quality.logic * 100.0));
+    }
+    if quality.relevance < weak_threshold {
+        weak_dims.push(format!("Relevance {:.0}%", quality.relevance * 100.0));
+    }
+    if quality.actionability < weak_threshold {
+        weak_dims.push(format!(
+            "Actionability {:.0}%",
+            quality.actionability * 100.0
+        ));
+    }
 
     if !weak_dims.is_empty() {
         output.push_str(&format!("📊 Weak dimensions: {}\n", weak_dims.join(", ")));
@@ -93,7 +108,10 @@ pub fn format_engine_output(
     // ─── Sandbox Result (if Python was executed) ─────────────────
     if is_sandbox_result {
         if let Some(sandbox_out) = sandbox_output {
-            output.push_str(&format!("🐍 **Sandbox Result**:\n```\n{}\n```\n", sandbox_out));
+            output.push_str(&format!(
+                "🐍 **Sandbox Result**:\n```\n{}\n```\n",
+                sandbox_out
+            ));
         }
     }
 
@@ -127,7 +145,9 @@ pub fn format_engine_output(
 
     // ─── Rejection Notice ────────────────────────────────────────
     if verdict.should_reject {
-        output.push_str("\n🚫 **REJECTION**: Quality below minimum threshold. Backtrack recommended.\n");
+        output.push_str(
+            "\n🚫 **REJECTION**: Quality below minimum threshold. Backtrack recommended.\n",
+        );
     }
 
     // ─── Early Stop Recommendation ───────────────────────────────
@@ -147,8 +167,12 @@ mod tests {
     fn test_formatter_includes_stage() {
         let session = StageSession::new();
         let quality = QualityScores {
-            clarity: 0.7, depth: 0.6, breadth: 0.5,
-            logic: 0.8, relevance: 0.7, actionability: 0.6,
+            clarity: 0.7,
+            depth: 0.6,
+            breadth: 0.5,
+            logic: 0.8,
+            relevance: 0.7,
+            actionability: 0.6,
         };
         let ewma = EwmaTracker::new(BudgetMode::Balanced);
         let verdict = HallucinationVerdict {
@@ -202,17 +226,25 @@ mod tests {
     fn test_formatter_flags_weak_dimensions() {
         let session = StageSession::new();
         let quality = QualityScores {
-            clarity: 0.2, depth: 0.1, breadth: 0.8,
-            logic: 0.9, relevance: 0.7, actionability: 0.3,
+            clarity: 0.2,
+            depth: 0.1,
+            breadth: 0.8,
+            logic: 0.9,
+            relevance: 0.7,
+            actionability: 0.3,
         };
         let ewma = EwmaTracker::new(BudgetMode::Balanced);
         let verdict = HallucinationVerdict {
             trust_score: 0.5,
             layers: crate::engine::anti_hallucination::LayerResults {
-                assumption_count: 0, confidence_calibrated: true,
-                cove_passed: true, evidence_strength: 0.5,
-                claim_count: 0, grounding_ratio: 1.0,
-                ewma_above_threshold: true, no_contradictions: true,
+                assumption_count: 0,
+                confidence_calibrated: true,
+                cove_passed: true,
+                evidence_strength: 0.5,
+                claim_count: 0,
+                grounding_ratio: 1.0,
+                ewma_above_threshold: true,
+                no_contradictions: true,
                 warmup_suppressed: false,
             },
             warnings: vec![],
@@ -220,14 +252,27 @@ mod tests {
             should_early_stop: false,
         };
         let metacog = MetacognitiveReport {
-            filler_ratio: 0.0, content_word_ratio: 0.7,
-            claim_density: 0.5, fallacies: vec![],
-            has_dialectical: true, warnings: vec![],
+            filler_ratio: 0.0,
+            content_word_ratio: 0.7,
+            claim_density: 0.5,
+            fallacies: vec![],
+            has_dialectical: true,
+            warnings: vec![],
         };
 
         let output = format_engine_output(
-            CognitiveStage::Define, &session, &quality, &ewma,
-            &verdict, &metacog, &[], &[], None, 1, false, None,
+            CognitiveStage::Define,
+            &session,
+            &quality,
+            &ewma,
+            &verdict,
+            &metacog,
+            &[],
+            &[],
+            None,
+            1,
+            false,
+            None,
             BudgetMode::Balanced,
         );
 

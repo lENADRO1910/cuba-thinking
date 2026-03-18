@@ -117,9 +117,8 @@ pub fn generate_memory_instructions(
 fn extract_search_query(thought: &str) -> String {
     // Extract first 3 significant words (>4 chars, not common)
     let stopwords = [
-        "this", "that", "with", "from", "what", "when", "where",
-        "which", "there", "their", "about", "would", "could",
-        "should", "have", "been", "some", "para", "como", "esta",
+        "this", "that", "with", "from", "what", "when", "where", "which", "there", "their",
+        "about", "would", "could", "should", "have", "been", "some", "para", "como", "esta",
         "este", "esto", "pero", "sino", "donde", "puede", "tiene",
     ];
 
@@ -143,8 +142,6 @@ fn extract_lesson_summary(thought: &str) -> String {
         truncated
     }
 }
-
-
 
 #[cfg(test)]
 mod tests {
@@ -199,7 +196,8 @@ mod tests {
 
     #[test]
     fn test_search_query_extraction() {
-        let query = extract_search_query("Define the database migration strategy for PostgreSQL cluster");
+        let query =
+            extract_search_query("Define the database migration strategy for PostgreSQL cluster");
         assert!(query.contains("database"));
         assert!(query.contains("migration"));
     }

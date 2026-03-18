@@ -105,9 +105,16 @@ fn check_anchoring_bias(lower: &str, thought_number: usize) -> Option<DetectedBi
     }
 
     let solution_markers = [
-        "the answer is", "we should", "the solution is",
-        "obviously", "clearly", "la respuesta es", "debemos",
-        "la solución es", "obviamente", "claramente",
+        "the answer is",
+        "we should",
+        "the solution is",
+        "obviously",
+        "clearly",
+        "la respuesta es",
+        "debemos",
+        "la solución es",
+        "obviamente",
+        "claramente",
     ];
     let is_premature = solution_markers.iter().any(|m| lower.contains(m));
     let no_alternatives = !lower.contains("alternative")
@@ -130,14 +137,35 @@ fn check_anchoring_bias(lower: &str, thought_number: usize) -> Option<DetectedBi
 /// Confirmation: only supporting evidence, no counter-arguments.
 fn check_confirmation_bias(lower: &str, thought_number: usize) -> Option<DetectedBias> {
     let support_markers = [
-        "confirms", "supports", "proves", "validates", "agrees with",
-        "confirma", "soporta", "prueba", "valida", "coincide",
+        "confirms",
+        "supports",
+        "proves",
+        "validates",
+        "agrees with",
+        "confirma",
+        "soporta",
+        "prueba",
+        "valida",
+        "coincide",
     ];
     let counter_markers = [
-        "however", "but", "although", "counter", "disagree",
-        "challenge", "risk", "downside", "limitation", "weakness",
-        "sin embargo", "pero", "aunque", "riesgo", "desventaja",
-        "limitación", "debilidad",
+        "however",
+        "but",
+        "although",
+        "counter",
+        "disagree",
+        "challenge",
+        "risk",
+        "downside",
+        "limitation",
+        "weakness",
+        "sin embargo",
+        "pero",
+        "aunque",
+        "riesgo",
+        "desventaja",
+        "limitación",
+        "debilidad",
     ];
 
     let has_support = support_markers.iter().any(|m| lower.contains(m));
@@ -158,10 +186,19 @@ fn check_confirmation_bias(lower: &str, thought_number: usize) -> Option<Detecte
 /// Availability: over-reliance on anecdotal/recalled examples.
 fn check_availability_bias(lower: &str) -> Option<DetectedBias> {
     let anecdotal_markers = [
-        "i've seen", "in my experience", "usually", "typically",
-        "everyone knows", "common knowledge", "obviously",
-        "he visto", "en mi experiencia", "usualmente", "típicamente",
-        "todos saben", "conocimiento común",
+        "i've seen",
+        "in my experience",
+        "usually",
+        "typically",
+        "everyone knows",
+        "common knowledge",
+        "obviously",
+        "he visto",
+        "en mi experiencia",
+        "usualmente",
+        "típicamente",
+        "todos saben",
+        "conocimiento común",
     ];
     let anecdotal_count = anecdotal_markers
         .iter()
@@ -183,10 +220,17 @@ fn check_availability_bias(lower: &str) -> Option<DetectedBias> {
 /// Sunk cost: continuing with a failing approach due to prior investment.
 fn check_sunk_cost_bias(lower: &str) -> Option<DetectedBias> {
     let sunk_cost_markers = [
-        "already invested", "too far to stop", "we've spent",
-        "can't abandon", "committed to", "already built",
-        "ya invertimos", "muy tarde para", "ya gastamos",
-        "no podemos abandonar", "comprometidos con",
+        "already invested",
+        "too far to stop",
+        "we've spent",
+        "can't abandon",
+        "committed to",
+        "already built",
+        "ya invertimos",
+        "muy tarde para",
+        "ya gastamos",
+        "no podemos abandonar",
+        "comprometidos con",
     ];
     if sunk_cost_markers.iter().any(|m| lower.contains(m)) {
         Some(DetectedBias {
@@ -203,10 +247,17 @@ fn check_sunk_cost_bias(lower: &str) -> Option<DetectedBias> {
 /// Bandwagon: citing popularity without justification.
 fn check_bandwagon_bias(lower: &str) -> Option<DetectedBias> {
     let bandwagon_markers = [
-        "everyone uses", "industry standard", "most popular",
-        "best practice", "widely adopted", "trending",
-        "todos usan", "estándar de la industria", "más popular",
-        "mejor práctica", "ampliamente adoptado",
+        "everyone uses",
+        "industry standard",
+        "most popular",
+        "best practice",
+        "widely adopted",
+        "trending",
+        "todos usan",
+        "estándar de la industria",
+        "más popular",
+        "mejor práctica",
+        "ampliamente adoptado",
     ];
     let no_justification = !lower.contains("because")
         && !lower.contains("since")
@@ -239,11 +290,10 @@ fn check_repetition_bias(lower: &str, previous_thoughts: &[&str]) -> Option<Dete
 
     // Build word set for current thought (stopwords excluded for signal)
     let stopwords = [
-        "the", "a", "an", "is", "are", "was", "were", "be", "been",
-        "to", "of", "in", "for", "on", "with", "at", "by", "from",
-        "it", "this", "that", "and", "or", "but", "not", "as",
-        "el", "la", "los", "las", "un", "una", "de", "en", "con",
-        "por", "para", "es", "son", "no", "que", "se", "del",
+        "the", "a", "an", "is", "are", "was", "were", "be", "been", "to", "of", "in", "for", "on",
+        "with", "at", "by", "from", "it", "this", "that", "and", "or", "but", "not", "as", "el",
+        "la", "los", "las", "un", "una", "de", "en", "con", "por", "para", "es", "son", "no",
+        "que", "se", "del",
     ];
 
     let current_words: std::collections::HashSet<&str> = lower
@@ -340,12 +390,9 @@ mod tests {
 
     #[test]
     fn test_agent_reported_bias() {
-        let biases = detect_biases(
-            "Let me explore this approach",
-            3,
-            &[],
-            Some("confirmation"),
-        );
-        assert!(biases.iter().any(|b| b.bias_type == BiasType::Confirmation && b.confidence == 0.9));
+        let biases = detect_biases("Let me explore this approach", 3, &[], Some("confirmation"));
+        assert!(biases
+            .iter()
+            .any(|b| b.bias_type == BiasType::Confirmation && b.confidence == 0.9));
     }
 }

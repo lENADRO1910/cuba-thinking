@@ -1,4 +1,3 @@
-
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -43,13 +42,22 @@ pub struct RpcRequest {
 #[serde(tag = "method")]
 pub enum McpAction {
     #[serde(rename = "initialize")]
-    Initialize { #[allow(dead_code)] params: Option<Value> },
+    Initialize {
+        #[allow(dead_code)]
+        params: Option<Value>,
+    },
 
     #[serde(rename = "notifications/initialized")]
-    Initialized { #[allow(dead_code)] params: Option<Value> },
+    Initialized {
+        #[allow(dead_code)]
+        params: Option<Value>,
+    },
 
     #[serde(rename = "tools/list")]
-    ToolsList { #[allow(dead_code)] params: Option<Value> },
+    ToolsList {
+        #[allow(dead_code)]
+        params: Option<Value>,
+    },
 
     #[serde(rename = "tools/call")]
     ToolsCall { params: ToolsCallParams },
@@ -96,7 +104,7 @@ pub struct RpcSuccessResponse {
 #[derive(Debug, Serialize)]
 pub struct RpcErrorResponse {
     pub jsonrpc: String,
-    pub id: RequestId, 
+    pub id: RequestId,
     pub error: RpcError,
 }
 
@@ -130,7 +138,11 @@ impl McpServer {
         let sandbox = Arc::new(LocalReasoningEngine::new("cognitive-engine-v3", 2).unwrap());
         let sessions = Arc::new(crate::engine::thought_session::SessionStore::new());
         let metrics = Arc::new(RedMetrics::new());
-        Self { sandbox, sessions, metrics }
+        Self {
+            sandbox,
+            sessions,
+            metrics,
+        }
     }
 
     /// Primary Execution Loop (STDIO)
@@ -151,190 +163,201 @@ impl McpServer {
 
         let local = tokio::task::LocalSet::new();
 
-        local.run_until(async move {
-            let mut stdin = BufReader::new(io::stdin());
-            let mut line = String::new();
+        local
+            .run_until(async move {
+                let mut stdin = BufReader::new(io::stdin());
+                let mut line = String::new();
 
-            loop {
-                line.clear();
-                let bytes_read = stdin.read_line(&mut line).await.unwrap_or(0);
-                if bytes_read == 0 {
-                    // EOF — emit RED metrics summary before shutdown
-                    self.metrics.emit_summary();
-                    break;
-                }
+                loop {
+                    line.clear();
+                    let bytes_read = stdin.read_line(&mut line).await.unwrap_or(0);
+                    if bytes_read == 0 {
+                        // EOF — emit RED metrics summary before shutdown
+                        self.metrics.emit_summary();
+                        break;
+                    }
 
-                let req_str = line.clone();
-                let self_clone = self.clone();
-                let tx_clone = tx.clone();
+                    let req_str = line.clone();
+                    let self_clone = self.clone();
+                    let tx_clone = tx.clone();
 
-                // Spawn every request in the local task set so the stdin listener isn't blocked!
-                // Essential for Phase 10 Mid-Turn Steering as the task future is !Send due to Bumpalo.
-                tokio::task::spawn_local(async move {
-                    match serde_json::from_str::<RpcRequest>(&req_str) {
-                        Ok(req) => {
-                            let result = self_clone.handle_request(&req, tx_clone.clone()).await;
+                    // Spawn every request in the local task set so the stdin listener isn't blocked!
+                    // Essential for Phase 10 Mid-Turn Steering as the task future is !Send due to Bumpalo.
+                    tokio::task::spawn_local(async move {
+                        match serde_json::from_str::<RpcRequest>(&req_str) {
+                            Ok(req) => {
+                                let result =
+                                    self_clone.handle_request(&req, tx_clone.clone()).await;
 
-                            if let Some(req_id) = req.id {
-                                let msg = match result {
-                                    Ok(Some(res_val)) => OutgoingMessage::Success(RpcSuccessResponse {
-                                        jsonrpc: "2.0".to_string(),
-                                        id: req_id,
-                                        result: res_val,
-                                    }),
-                                    Ok(None) => return,
-                                    Err(err) => OutgoingMessage::Error(RpcErrorResponse {
-                                        jsonrpc: "2.0".to_string(),
-                                        id: req_id,
-                                        error: err,
-                                    }),
-                                };
-                                let _ = tx_clone.send(msg).await;
+                                if let Some(req_id) = req.id {
+                                    let msg = match result {
+                                        Ok(Some(res_val)) => {
+                                            OutgoingMessage::Success(RpcSuccessResponse {
+                                                jsonrpc: "2.0".to_string(),
+                                                id: req_id,
+                                                result: res_val,
+                                            })
+                                        }
+                                        Ok(None) => return,
+                                        Err(err) => OutgoingMessage::Error(RpcErrorResponse {
+                                            jsonrpc: "2.0".to_string(),
+                                            id: req_id,
+                                            error: err,
+                                        }),
+                                    };
+                                    let _ = tx_clone.send(msg).await;
+                                }
+                            }
+                            Err(e) => {
+                                tracing::error!(
+                                    "Failed to parse JSON-RPC: {} | Error: {}",
+                                    req_str,
+                                    e
+                                );
+                                let err_msg = OutgoingMessage::Error(RpcErrorResponse {
+                                    jsonrpc: "2.0".to_string(),
+                                    id: RequestId::Null,
+                                    error: RpcError {
+                                        code: -32700,
+                                        message: "Parse error".to_string(),
+                                        data: None,
+                                    },
+                                });
+                                let _ = tx_clone.send(err_msg).await;
                             }
                         }
-                        Err(e) => {
-                            tracing::error!("Failed to parse JSON-RPC: {} | Error: {}", req_str, e);
-                            let err_msg = OutgoingMessage::Error(RpcErrorResponse {
-                                jsonrpc: "2.0".to_string(),
-                                id: RequestId::Null,
-                                error: RpcError {
-                                    code: -32700,
-                                    message: "Parse error".to_string(),
-                                    data: None,
-                                },
-                            });
-                            let _ = tx_clone.send(err_msg).await;
-                        }
-                    }
-                });
-            }
-        }).await;
+                    });
+                }
+            })
+            .await;
 
         Ok(())
     }
 
-    async fn handle_request(&self, req: &RpcRequest, tx: tokio::sync::mpsc::Sender<OutgoingMessage>) -> Result<Option<Value>, RpcError> {
+    async fn handle_request(
+        &self,
+        req: &RpcRequest,
+        tx: tokio::sync::mpsc::Sender<OutgoingMessage>,
+    ) -> Result<Option<Value>, RpcError> {
         match &req.action {
-            McpAction::Initialize { .. } => {
-                Ok(Some(serde_json::json!({
-                    "protocolVersion": "2024-11-05",
-                    "capabilities": {
-                        "tools": {}
-                    },
-                    "serverInfo": {
-                        "name": "cuba_cognitive_engine_v3",
-                        "version": "3.0.0"
-                    }
-                })))
-            },
-            McpAction::Initialized { .. } => {
-                Ok(None)
-            },
-            McpAction::ToolsList { .. } => {
-                Ok(Some(serde_json::json!({
-                    "tools": [
-                        {
-                            "name": "cuba_thinking",
-                            "description": "Cuba Cognitive Engine: Executes Deep Reasoning and MCTS evaluations.\n\nCRITICAL: DO NOT PASS NATURAL LANGUAGE. The engine is 100% Native Silicon (PyO3). You MUST pass the query in formalized SILICON LANGUAGE (Python, Z3 SMT logic, or strict JSON).\nExample: `assert x > 5` or `import z3; return res`.",
-                            "inputSchema": {
-                                "type": "object",
-                                "properties": {
-                                    "thought": {
-                                        "type": "string",
-                                        "description": "The thought branch to evaluate. MUST BE STRICT PROGRAMMING CODE (Python/Z3/AST evaluateable). Natural language will be rejected."
-                                    },
-                                    "hypothesis": {
-                                        "type": "string",
-                                        "description": "Mathematical Context or prior hypothesis constraints"
-                                    },
-                                    "confidence": {
-                                        "type": "number",
-                                        "description": "Your confidence in this thought (0.0 to 1.0). Engine will calibrate."
-                                    },
-                                    "budgetMode": {
-                                        "type": "string",
-                                        "description": "Reasoning depth: fast, balanced, thorough, or exhaustive",
-                                        "enum": ["fast", "balanced", "thorough", "exhaustive"]
-                                    },
-                                    "thinkingStage": {
-                                        "type": "string",
-                                        "description": "Current cognitive stage",
-                                        "enum": ["DEFINE", "RESEARCH", "ANALYZE", "HYPOTHESIZE", "VERIFY", "SYNTHESIZE"]
-                                    },
-                                    "biasDetected": {
-                                        "type": "string",
-                                        "description": "Self-reported bias: anchoring, confirmation, availability, sunk_cost, bandwagon"
-                                    },
-                                    "assumptions": {
-                                        "type": "array",
-                                        "items": { "type": "string" },
-                                        "description": "Explicit assumptions the AI is making"
-                                    },
-                                    "thoughtNumber": {
-                                        "type": "integer",
-                                        "description": "Sequential thought number (1-based)"
-                                    },
-                                    "nextThoughtNeeded": {
-                                        "type": "boolean",
-                                        "description": "Set to false when this is the final thought"
-                                    }
+            McpAction::Initialize { .. } => Ok(Some(serde_json::json!({
+                "protocolVersion": "2024-11-05",
+                "capabilities": {
+                    "tools": {}
+                },
+                "serverInfo": {
+                    "name": "cuba_cognitive_engine_v3",
+                    "version": "3.0.0"
+                }
+            }))),
+            McpAction::Initialized { .. } => Ok(None),
+            McpAction::ToolsList { .. } => Ok(Some(serde_json::json!({
+                "tools": [
+                    {
+                        "name": "cuba_thinking",
+                        "description": "Cuba Cognitive Engine: Executes Deep Reasoning and MCTS evaluations.\n\nCRITICAL: DO NOT PASS NATURAL LANGUAGE. The engine is 100% Native Silicon (PyO3). You MUST pass the query in formalized SILICON LANGUAGE (Python, Z3 SMT logic, or strict JSON).\nExample: `assert x > 5` or `import z3; return res`.",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "thought": {
+                                    "type": "string",
+                                    "description": "The thought branch to evaluate. MUST BE STRICT PROGRAMMING CODE (Python/Z3/AST evaluateable). Natural language will be rejected."
                                 },
-                                "required": ["thought"]
-                            }
-                        },
-                        {
-                            "name": "run_stress_benchmark",
-                            "description": "Simulates 5000 parallel requests to validate engine networking performance.",
-                            "inputSchema": {
-                                "type": "object",
-                                "properties": {}
-                            }
-                        },
-                        {
-                            "name": "verify_code",
-                            "description": "Execute Python code in a secure sandbox and return PRM (Process Reward Model) verdict with quality metrics. Use for quick code verification without full cognitive analysis.",
-                            "inputSchema": {
-                                "type": "object",
-                                "properties": {
-                                    "code": {
-                                        "type": "string",
-                                        "description": "Python code to verify (asserts, functions, computations)"
-                                    }
+                                "hypothesis": {
+                                    "type": "string",
+                                    "description": "Mathematical Context or prior hypothesis constraints"
                                 },
-                                "required": ["code"]
-                            }
-                        },
-                        {
-                            "name": "analyze_reasoning",
-                            "description": "Analyze a multi-step reasoning chain for coherence, contradictions, novelty decay, and grounding quality. Returns semantic quality report.",
-                            "inputSchema": {
-                                "type": "object",
-                                "properties": {
-                                    "thoughts": {
-                                        "type": "array",
-                                        "items": { "type": "string" },
-                                        "description": "Array of reasoning steps to analyze in order"
-                                    },
-                                    "context": {
-                                        "type": "string",
-                                        "description": "Optional context or hypothesis the reasoning should stay grounded to"
-                                    }
+                                "confidence": {
+                                    "type": "number",
+                                    "description": "Your confidence in this thought (0.0 to 1.0). Engine will calibrate."
                                 },
-                                "required": ["thoughts"]
-                            }
+                                "budgetMode": {
+                                    "type": "string",
+                                    "description": "Reasoning depth: fast, balanced, thorough, or exhaustive",
+                                    "enum": ["fast", "balanced", "thorough", "exhaustive"]
+                                },
+                                "thinkingStage": {
+                                    "type": "string",
+                                    "description": "Current cognitive stage",
+                                    "enum": ["DEFINE", "RESEARCH", "ANALYZE", "HYPOTHESIZE", "VERIFY", "SYNTHESIZE"]
+                                },
+                                "biasDetected": {
+                                    "type": "string",
+                                    "description": "Self-reported bias: anchoring, confirmation, availability, sunk_cost, bandwagon"
+                                },
+                                "assumptions": {
+                                    "type": "array",
+                                    "items": { "type": "string" },
+                                    "description": "Explicit assumptions the AI is making"
+                                },
+                                "thoughtNumber": {
+                                    "type": "integer",
+                                    "description": "Sequential thought number (1-based)"
+                                },
+                                "nextThoughtNeeded": {
+                                    "type": "boolean",
+                                    "description": "Set to false when this is the final thought"
+                                }
+                            },
+                            "required": ["thought"]
                         }
-                    ]
-                })))
-            },
+                    },
+                    {
+                        "name": "run_stress_benchmark",
+                        "description": "Simulates 5000 parallel requests to validate engine networking performance.",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {}
+                        }
+                    },
+                    {
+                        "name": "verify_code",
+                        "description": "Execute Python code in a secure sandbox and return PRM (Process Reward Model) verdict with quality metrics. Use for quick code verification without full cognitive analysis.",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "code": {
+                                    "type": "string",
+                                    "description": "Python code to verify (asserts, functions, computations)"
+                                }
+                            },
+                            "required": ["code"]
+                        }
+                    },
+                    {
+                        "name": "analyze_reasoning",
+                        "description": "Analyze a multi-step reasoning chain for coherence, contradictions, novelty decay, and grounding quality. Returns semantic quality report.",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "thoughts": {
+                                    "type": "array",
+                                    "items": { "type": "string" },
+                                    "description": "Array of reasoning steps to analyze in order"
+                                },
+                                "context": {
+                                    "type": "string",
+                                    "description": "Optional context or hypothesis the reasoning should stay grounded to"
+                                }
+                            },
+                            "required": ["thoughts"]
+                        }
+                    }
+                ]
+            }))),
             McpAction::ToolsCall { params } => self.handle_tool_call(params, tx).await,
             McpAction::ControlSteer { params } => {
-                tracing::info!("Received Mid-Turn Steering Interruption for branch_id: {} with action: {}", params.target_branch_id, params.action);
+                tracing::info!(
+                    "Received Mid-Turn Steering Interruption for branch_id: {} with action: {}",
+                    params.target_branch_id,
+                    params.action
+                );
                 // Implementation for runtime interception will follow
                 Ok(Some(serde_json::json!({
                     "status": "steered",
                     "branch_id": params.target_branch_id
                 })))
-            },
+            }
             McpAction::Unknown => {
                 if req.id.is_none() {
                     Ok(None)
@@ -349,7 +372,11 @@ impl McpServer {
         }
     }
 
-    async fn handle_tool_call(&self, params: &ToolsCallParams, tx: tokio::sync::mpsc::Sender<OutgoingMessage>) -> Result<Option<Value>, RpcError> {
+    async fn handle_tool_call(
+        &self,
+        params: &ToolsCallParams,
+        tx: tokio::sync::mpsc::Sender<OutgoingMessage>,
+    ) -> Result<Option<Value>, RpcError> {
         let tool_name = params.name.as_str();
         let call_start = std::time::Instant::now();
         let _span = tracing::info_span!("tool_call", tool = tool_name).entered();
@@ -363,7 +390,7 @@ impl McpServer {
                 code: -32601,
                 message: format!("Unknown tool: {}", tool_name),
                 data: None,
-            })
+            }),
         };
 
         let duration = call_start.elapsed();
@@ -381,7 +408,12 @@ impl McpServer {
     }
 
     /// F5: Shared progress notification emitter.
-    async fn emit_progress(tx: &tokio::sync::mpsc::Sender<OutgoingMessage>, token: Option<Value>, progress: f64, total: f64) {
+    async fn emit_progress(
+        tx: &tokio::sync::mpsc::Sender<OutgoingMessage>,
+        token: Option<Value>,
+        progress: f64,
+        total: f64,
+    ) {
         if let Some(t) = token {
             let notif = OutgoingMessage::Notification(RpcNotification {
                 jsonrpc: "2.0".to_string(),
@@ -390,52 +422,83 @@ impl McpServer {
                     "progressToken": t,
                     "progress": progress,
                     "total": total
-                })
+                }),
             });
             let _ = tx.send(notif).await;
         }
     }
 
-    async fn handle_cuba_thinking_tool(&self, params: &ToolsCallParams, tx: tokio::sync::mpsc::Sender<OutgoingMessage>) -> Result<Option<Value>, RpcError> {
+    async fn handle_cuba_thinking_tool(
+        &self,
+        params: &ToolsCallParams,
+        tx: tokio::sync::mpsc::Sender<OutgoingMessage>,
+    ) -> Result<Option<Value>, RpcError> {
         let progress_token = params._meta.as_ref().and_then(|m| m.progress_token.clone());
         let tx_prog = tx.clone();
-        
+
         Self::emit_progress(&tx_prog, progress_token.clone(), 5.0, 100.0).await;
-        
+
         // ─── Parse Input Arguments ───────────────────────────────
         let arguments = params.arguments.clone().unwrap_or(serde_json::json!({}));
-        let hypothesis = arguments.get("hypothesis").and_then(Value::as_str).unwrap_or("...");
-        let thought = arguments.get("thought").and_then(Value::as_str).unwrap_or("...");
+        let hypothesis = arguments
+            .get("hypothesis")
+            .and_then(Value::as_str)
+            .unwrap_or("...");
+        let thought = arguments
+            .get("thought")
+            .and_then(Value::as_str)
+            .unwrap_or("...");
+
+        const MAX_PAYLOAD_LEN: usize = 100_000;
+        if thought.len() > MAX_PAYLOAD_LEN {
+            return Err(RpcError {
+                code: -32602,
+                message: format!(
+                    "thought exceeds maximum length of {} bytes",
+                    MAX_PAYLOAD_LEN
+                ),
+                data: None,
+            });
+        }
+        if hypothesis.len() > MAX_PAYLOAD_LEN {
+            return Err(RpcError {
+                code: -32602,
+                message: format!(
+                    "hypothesis exceeds maximum length of {} bytes",
+                    MAX_PAYLOAD_LEN
+                ),
+                data: None,
+            });
+        }
 
         // Optional parameters from the AI
-        let confidence = arguments.get("confidence")
+        let confidence = arguments
+            .get("confidence")
             .and_then(Value::as_f64)
             .unwrap_or(0.5);
-        let budget_str = arguments.get("budgetMode")
-            .and_then(Value::as_str);
-        let explicit_stage = arguments.get("thinkingStage")
-            .and_then(Value::as_str);
-        let bias_detected = arguments.get("biasDetected")
-            .and_then(Value::as_str);
-        let assumptions_val = arguments.get("assumptions")
-            .and_then(Value::as_array);
-        let thought_number = arguments.get("thoughtNumber")
+        let budget_str = arguments.get("budgetMode").and_then(Value::as_str);
+        let explicit_stage = arguments.get("thinkingStage").and_then(Value::as_str);
+        let bias_detected = arguments.get("biasDetected").and_then(Value::as_str);
+        let assumptions_val = arguments.get("assumptions").and_then(Value::as_array);
+        let thought_number = arguments
+            .get("thoughtNumber")
             .and_then(Value::as_u64)
             .unwrap_or(1) as usize;
-        let is_final = arguments.get("nextThoughtNeeded")
+        let is_final = arguments
+            .get("nextThoughtNeeded")
             .and_then(Value::as_bool)
-            .map(|v| !v)  // nextThoughtNeeded=false means this IS the final thought
+            .map(|v| !v) // nextThoughtNeeded=false means this IS the final thought
             .unwrap_or(false);
 
         // ─── Import Cognitive Modules ────────────────────────────
-        use crate::engine::budget::BudgetMode;
-        use crate::engine::stage_engine::{CognitiveStage, StageSession, detect_stage};
-        use crate::engine::quality_metrics;
-        use crate::engine::ewma_reward::RewardSignals;
         use crate::engine::anti_hallucination;
         use crate::engine::bias_detector;
-        use crate::engine::metacognition;
+        use crate::engine::budget::BudgetMode;
+        use crate::engine::ewma_reward::RewardSignals;
         use crate::engine::memory_bridge;
+        use crate::engine::metacognition;
+        use crate::engine::quality_metrics;
+        use crate::engine::stage_engine::{detect_stage, CognitiveStage, StageSession};
 
         use crate::engine::formatter;
 
@@ -485,9 +548,9 @@ impl McpServer {
 
         // ─── Phase 5A: Session-Persistent State ──────────────────
         // Instead of creating new trackers per call, reuse persistent session.
-        use crate::engine::semantic_similarity;
-        use crate::engine::contradiction_detector;
         use crate::engine::claim_grounding;
+        use crate::engine::contradiction_detector;
+        use crate::engine::semantic_similarity;
         use crate::engine::thought_session::TrendIndicator;
 
         let sessions = self.sessions.clone();
@@ -495,45 +558,53 @@ impl McpServer {
         let thought_owned = thought.to_string();
 
         // Access session and compute all semantic signals within the lock
-        let (coherence, contradictions, info_gain, mut ewma_clone, mut trend, drift, _prev_thought_texts) =
-            sessions.with_session(hypothesis, budget, |session| {
-                // Get previous thoughts for semantic analysis (G6)
-                let prev_texts: Vec<String> = session.previous_thoughts(3)
-                    .iter()
-                    .map(|s| s.to_string())
-                    .collect();
+        let (
+            coherence,
+            contradictions,
+            info_gain,
+            mut ewma_clone,
+            mut trend,
+            drift,
+            _prev_thought_texts,
+        ) = sessions.with_session(hypothesis, budget, |session| {
+            // Get previous thoughts for semantic analysis (G6)
+            let prev_texts: Vec<String> = session
+                .previous_thoughts(3)
+                .iter()
+                .map(|s| s.to_string())
+                .collect();
 
-                // Record this thought in session
-                session.record_thought(&thought_owned);
+            // Record this thought in session
+            session.record_thought(&thought_owned);
 
-                // S1/S3: Coherence against ACTUAL previous thought (not just hypothesis)
-                let coh = if !prev_texts.is_empty() {
-                    let last_prev = prev_texts.last().unwrap();
-                    semantic_similarity::compute_coherence(&thought_owned, Some(last_prev))
-                } else if hypothesis_owned != thought_owned {
-                    semantic_similarity::compute_coherence(&thought_owned, Some(&hypothesis_owned))
-                } else {
-                    1.0
-                };
+            // S1/S3: Coherence against ACTUAL previous thought (not just hypothesis)
+            let coh = if !prev_texts.is_empty() {
+                let last_prev = prev_texts.last().unwrap();
+                semantic_similarity::compute_coherence(&thought_owned, Some(last_prev))
+            } else if hypothesis_owned != thought_owned {
+                semantic_similarity::compute_coherence(&thought_owned, Some(&hypothesis_owned))
+            } else {
+                1.0
+            };
 
-                // S2: Contradictions against ALL previous thoughts (not just hypothesis)
-                let prev_refs: Vec<&str> = prev_texts.iter().map(|s| s.as_str()).collect();
-                let contras = contradiction_detector::detect_contradictions(&thought_owned, &prev_refs);
+            // S2: Contradictions against ALL previous thoughts (not just hypothesis)
+            let prev_refs: Vec<&str> = prev_texts.iter().map(|s| s.as_str()).collect();
+            let contras = contradiction_detector::detect_contradictions(&thought_owned, &prev_refs);
 
-                // S4: Novelty from persistent tracker (accumulated vocabulary)
-                let ig = session.novelty.track_novelty(&thought_owned);
+            // S4: Novelty from persistent tracker (accumulated vocabulary)
+            let ig = session.novelty.track_novelty(&thought_owned);
 
-                // Clone EWMA for use outside the lock
-                let ewma_snap = session.ewma.clone();
+            // Clone EWMA for use outside the lock
+            let ewma_snap = session.ewma.clone();
 
-                // G10: Current trend
-                let tr = session.trend;
+            // G10: Current trend
+            let tr = session.trend;
 
-                // G11 + Vector A: Combined drift (hypothesis + root-anchoring)
-                let dr = session.combined_drift(&hypothesis_owned, &thought_owned);
+            // G11 + Vector A: Combined drift (hypothesis + root-anchoring)
+            let dr = session.combined_drift(&hypothesis_owned, &thought_owned);
 
-                (coh, contras, ig, ewma_snap, tr, dr, prev_texts)
-            });
+            (coh, contras, ig, ewma_snap, tr, dr, prev_texts)
+        });
 
         // ─── S5: Claim Grounding (Phase 3) ───────────────────────
         let grounding_result = claim_grounding::analyze_grounding(thought);
@@ -541,8 +612,8 @@ impl McpServer {
         // S5 grounding feeds into F9 single EWMA update below
 
         // ─── N1: Sandbox Execution (before EWMA, for single-update) ──
-        use crate::engine::sandbox::SandboxResult as SboxResult;
         use crate::engine::micro_prm;
+        use crate::engine::sandbox::SandboxResult as SboxResult;
 
         let sandbox_result: SboxResult = self.sandbox.execute(thought).await;
         let prm_verdict = micro_prm::evaluate_prm(&sandbox_result);
@@ -551,7 +622,11 @@ impl McpServer {
         Self::emit_progress(&tx_prog, progress_token.clone(), 50.0, 100.0).await;
 
         // F9: Single EWMA update with PRM-enriched signals (one lock acquisition)
-        let final_grounding = if prm_score > 0.0 { prm_score } else { grounding_result.grounding };
+        let final_grounding = if prm_score > 0.0 {
+            prm_score
+        } else {
+            grounding_result.grounding
+        };
         let final_signals = RewardSignals {
             quality: quality.weighted_mean(stage),
             faithfulness: grounding_result.faithfulness,
@@ -587,7 +662,11 @@ impl McpServer {
         } else {
             String::new()
         };
-        let sandbox_text = if is_sandbox { Some(sandbox_output_text.as_str()) } else { None };
+        let sandbox_text = if is_sandbox {
+            Some(sandbox_output_text.as_str())
+        } else {
+            None
+        };
 
         // ─── Phase 5D: Confidence Calibration (G4) ──────────────
         // Bayesian adjustment: blend agent's declared confidence with PRM evidence.
@@ -606,20 +685,22 @@ impl McpServer {
 
         // ─── R4+R10: Anti-Hallucination ──────────────────────────
         let verdict = anti_hallucination::verify_thought(
-            thought, &session, &quality, &mut ewma, calibrated_confidence, thought_number,
+            thought,
+            &session,
+            &quality,
+            &mut ewma,
+            calibrated_confidence,
+            thought_number,
         );
 
         // ─── R7: Bias Detection (F14: pass real session history) ─
         let prev_bias_refs: Vec<&str> = _prev_thought_texts.iter().map(|s| s.as_str()).collect();
-        let biases = bias_detector::detect_biases(
-            thought, thought_number, &prev_bias_refs, bias_detected,
-        );
+        let biases =
+            bias_detector::detect_biases(thought, thought_number, &prev_bias_refs, bias_detected);
 
         // ─── R8: Metacognitive Analysis ──────────────────────────
-        let is_verify_or_synth = matches!(
-            stage,
-            CognitiveStage::Verify | CognitiveStage::Synthesize
-        );
+        let is_verify_or_synth =
+            matches!(stage, CognitiveStage::Verify | CognitiveStage::Synthesize);
         let metacog = metacognition::analyze_metacognition(thought, is_verify_or_synth);
 
         Self::emit_progress(&tx_prog, progress_token.clone(), 80.0, 100.0).await;
@@ -629,9 +710,8 @@ impl McpServer {
         let stage_alignment = stage_validator::validate_stage_alignment(thought, stage);
 
         // ─── G7: Logical Step Validity (ReasonEval 2024) ─────────
-        let (logical_validity, logical_warning) = stage_validator::validate_logical_validity(
-            thought, thought_number,
-        );
+        let (logical_validity, logical_warning) =
+            stage_validator::validate_logical_validity(thought, thought_number);
 
         // ─── G8: Reasoning Type Classification (Walton 2006) ─────
         let reasoning_type = metacognition::classify_reasoning_type(thought);
@@ -641,13 +721,17 @@ impl McpServer {
         let claim_count = verdict.layers.claim_count;
         let is_code = crate::engine::shared_utils::is_code_input(thought);
         let mut directives = corrective_directives::generate_directives(
-            &quality, &verdict, &metacog, claim_count, is_code,
+            &quality,
+            &verdict,
+            &metacog,
+            claim_count,
+            is_code,
         );
 
         // ─── G5: Reflexion Self-Evaluation (Shinn 2023) ──────────
-        if let Some(reflexion) = corrective_directives::generate_reflexion_directive(
-            verdict.trust_score, thought_number,
-        ) {
+        if let Some(reflexion) =
+            corrective_directives::generate_reflexion_directive(verdict.trust_score, thought_number)
+        {
             directives.push(reflexion);
         }
 
@@ -689,7 +773,9 @@ impl McpServer {
                         "🔀 REWARD DIVERGENCE: PRM ({:.0}%) and EWMA ({:.0}%) diverge by {:.0}pp \
                          (threshold: 40pp, Z≈1.9). This may indicate reward gaming — \
                          high code scores without proportional reasoning quality, or vice versa.",
-                        prm_score * 100.0, ewma_pct * 100.0, divergence * 100.0
+                        prm_score * 100.0,
+                        ewma_pct * 100.0,
+                        divergence * 100.0
                     ),
                 });
             }
@@ -701,17 +787,26 @@ impl McpServer {
         });
 
         // ─── R11: Memory Bridge ──────────────────────────────────
-        let memory_instructions = memory_bridge::generate_memory_instructions(
-            stage, thought_number, is_final, thought,
-        );
+        let memory_instructions =
+            memory_bridge::generate_memory_instructions(stage, thought_number, is_final, thought);
 
         Self::emit_progress(&tx_prog, progress_token.clone(), 90.0, 100.0).await;
 
         // ─── R12: Format Output ──────────────────────────────────
         let formatted = formatter::format_engine_output(
-            stage, &session, &quality, &ewma, &verdict, &metacog,
-            &biases, &memory_instructions, Some(&topology),
-            thought_number, is_sandbox, sandbox_text, budget,
+            stage,
+            &session,
+            &quality,
+            &ewma,
+            &verdict,
+            &metacog,
+            &biases,
+            &memory_instructions,
+            Some(&topology),
+            thought_number,
+            is_sandbox,
+            sandbox_text,
+            budget,
         );
 
         // ─── Phase 5B: Append directives + trend + drift ─────────
@@ -744,7 +839,8 @@ impl McpServer {
         final_output.push_str(&format!("\n🧩 Reasoning: {}", reasoning_type.label()));
 
         // Corrective directives (G2/G7/G9/G12 — adaptive: suppress when EWMA > 70%)
-        if ewma.percentage() < 70.0 || corrective_directives::has_mandatory_corrections(&directives) {
+        if ewma.percentage() < 70.0 || corrective_directives::has_mandatory_corrections(&directives)
+        {
             let directives_text = corrective_directives::format_directives(&directives);
             if !directives_text.is_empty() {
                 final_output.push_str(&format!("\n{}", directives_text));
@@ -755,7 +851,9 @@ impl McpServer {
         if confidence_delta.abs() > 0.1 {
             final_output.push_str(&format!(
                 "\n🎯 Calibrated confidence: {:.0}% → {:.0}% (delta: {:+.0}%)",
-                confidence * 100.0, calibrated_confidence * 100.0, confidence_delta * 100.0
+                confidence * 100.0,
+                calibrated_confidence * 100.0,
+                confidence_delta * 100.0
             ));
         }
 
@@ -768,12 +866,16 @@ impl McpServer {
 
         tracing::info!(
             "Cognitive Engine v3.0 | Stage: {:?} | EWMA: {:.1}% | Trust: {:.1}% | Budget: {:?}",
-            stage, ewma.percentage(), verdict.trust_score * 100.0, budget
+            stage,
+            ewma.percentage(),
+            verdict.trust_score * 100.0,
+            budget
         );
 
         // ─── Build Response ──────────────────────────────────────
         let is_error = verdict.should_reject;
-        let session_thought_count = sessions.with_session(hypothesis, budget, |s| s.thought_count());
+        let session_thought_count =
+            sessions.with_session(hypothesis, budget, |s| s.thought_count());
         let response = serde_json::json!({
             "content": [{
                 "type": "text",
@@ -801,7 +903,11 @@ impl McpServer {
         Ok(Some(response))
     }
 
-    async fn handle_stress_benchmark_tool(&self, params: &ToolsCallParams, tx: tokio::sync::mpsc::Sender<OutgoingMessage>) -> Result<Option<Value>, RpcError> {
+    async fn handle_stress_benchmark_tool(
+        &self,
+        params: &ToolsCallParams,
+        tx: tokio::sync::mpsc::Sender<OutgoingMessage>,
+    ) -> Result<Option<Value>, RpcError> {
         let progress_token = params._meta.as_ref().and_then(|m| m.progress_token.clone());
         let tx_prog = tx.clone();
 
@@ -809,9 +915,9 @@ impl McpServer {
         tracing::info!("Starting MASSIVE STRESS TEST. 5000 Parallel asynchronous requests...");
         let start = Instant::now();
         let mut handles = vec![];
-        
+
         Self::emit_progress(&tx_prog, progress_token.clone(), 20.0, 100.0).await;
-        
+
         for _i in 0..5000 {
             let handle = tokio::spawn(async move {
                 tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
@@ -819,16 +925,19 @@ impl McpServer {
             });
             handles.push(handle);
         }
-        
+
         Self::emit_progress(&tx_prog, progress_token.clone(), 80.0, 100.0).await;
-        
+
         let _results = futures::future::join_all(handles).await;
         let elapsed = start.elapsed();
-        let final_msg = format!("Stress Test Complete: 5000 branches processed in {:.2?}s.", elapsed);
+        let final_msg = format!(
+            "Stress Test Complete: 5000 branches processed in {:.2?}s.",
+            elapsed
+        );
         tracing::info!("{}", final_msg);
-        
+
         Self::emit_progress(&tx_prog, progress_token, 100.0, 100.0).await;
-        
+
         Ok(Some(serde_json::json!({
             "content": [{
                 "type": "text",
@@ -838,9 +947,13 @@ impl McpServer {
     }
 
     // ─── Phase 4: verify_code Tool ──────────────────────────────────
-    async fn handle_verify_code_tool(&self, params: &ToolsCallParams) -> Result<Option<Value>, RpcError> {
+    async fn handle_verify_code_tool(
+        &self,
+        params: &ToolsCallParams,
+    ) -> Result<Option<Value>, RpcError> {
         let arguments = params.arguments.clone().unwrap_or(serde_json::json!({}));
-        let code = arguments.get("code")
+        let code = arguments
+            .get("code")
             .and_then(|v: &Value| v.as_str())
             .unwrap_or("");
 
@@ -853,27 +966,36 @@ impl McpServer {
         }
 
         // Execute in sandbox
-        use crate::engine::sandbox::SandboxResult as SboxResult;
         use crate::engine::micro_prm;
+        use crate::engine::sandbox::SandboxResult as SboxResult;
 
         let sandbox_result: SboxResult = self.sandbox.execute(code).await;
         let prm_verdict = micro_prm::evaluate_prm(&sandbox_result);
 
         // Format output — F22: English
         let mut output = "🔍 **Code Verification**\n\n".to_string();
-        output.push_str(&format!("PRM: {:.0}% — {}\n", prm_verdict.composite_score * 100.0, prm_verdict.verdict));
+        output.push_str(&format!(
+            "PRM: {:.0}% — {}\n",
+            prm_verdict.composite_score * 100.0,
+            prm_verdict.verdict
+        ));
         for exp in &prm_verdict.explanations {
             output.push_str(&format!("  {}\n", exp));
         }
 
         if !sandbox_result.stdout.is_empty() {
-            output.push_str(&format!("\n📤 stdout:\n```\n{}\n```\n", sandbox_result.stdout.trim()));
+            output.push_str(&format!(
+                "\n📤 stdout:\n```\n{}\n```\n",
+                sandbox_result.stdout.trim()
+            ));
         }
         if let Some(ref err) = sandbox_result.error {
             output.push_str(&format!("\n❌ Error: {}\n", err));
         }
-        output.push_str(&format!("\n⏱️ Execution: {}ms | Complexity: CC={}\n",
-            sandbox_result.execution_ms, sandbox_result.ast_analysis.cyclomatic_complexity));
+        output.push_str(&format!(
+            "\n⏱️ Execution: {}ms | Complexity: CC={}\n",
+            sandbox_result.execution_ms, sandbox_result.ast_analysis.cyclomatic_complexity
+        ));
 
         Ok(Some(serde_json::json!({
             "content": [{
@@ -891,20 +1013,29 @@ impl McpServer {
     }
 
     // ─── Phase 4: analyze_reasoning Tool ────────────────────────────
-    async fn handle_analyze_reasoning_tool(&self, params: &ToolsCallParams) -> Result<Option<Value>, RpcError> {
-        use crate::engine::semantic_similarity;
+    async fn handle_analyze_reasoning_tool(
+        &self,
+        params: &ToolsCallParams,
+    ) -> Result<Option<Value>, RpcError> {
+        use crate::engine::claim_grounding;
         use crate::engine::contradiction_detector;
         use crate::engine::novelty_tracker::NoveltyTracker;
-        use crate::engine::claim_grounding;
+        use crate::engine::semantic_similarity;
 
         let arguments = params.arguments.clone().unwrap_or(serde_json::json!({}));
 
-        let thoughts: Vec<String> = arguments.get("thoughts")
+        let thoughts: Vec<String> = arguments
+            .get("thoughts")
             .and_then(|v: &Value| v.as_array())
-            .map(|arr: &Vec<Value>| arr.iter().filter_map(|v: &Value| v.as_str().map(String::from)).collect())
+            .map(|arr: &Vec<Value>| {
+                arr.iter()
+                    .filter_map(|v: &Value| v.as_str().map(String::from))
+                    .collect()
+            })
             .unwrap_or_default();
 
-        let context = arguments.get("context")
+        let context = arguments
+            .get("context")
             .and_then(|v: &Value| v.as_str())
             .unwrap_or("");
 
@@ -916,7 +1047,10 @@ impl McpServer {
             });
         }
 
-        let mut output = format!("📊 **Reasoning Chain Analysis** ({} steps)\n\n", thoughts.len());
+        let mut output = format!(
+            "📊 **Reasoning Chain Analysis** ({} steps)\n\n",
+            thoughts.len()
+        );
         let mut novelty_tracker = NoveltyTracker::new();
         let mut all_coherence = Vec::new();
         let mut all_novelty = Vec::new();
@@ -926,19 +1060,27 @@ impl McpServer {
         // Seed novelty with context if provided
         if !context.is_empty() {
             novelty_tracker.track_novelty(context);
-            output.push_str(&format!("🎯 Context: \"{}\"\n\n", crate::engine::shared_utils::truncate_str(context, 80)));
+            output.push_str(&format!(
+                "🎯 Context: \"{}\"\n\n",
+                crate::engine::shared_utils::truncate_str(context, 80)
+            ));
         }
 
         for (i, thought) in thoughts.iter().enumerate() {
             let step = i + 1;
-            let prev = if i > 0 { Some(thoughts[i - 1].as_str()) } else { None };
+            let prev = if i > 0 {
+                Some(thoughts[i - 1].as_str())
+            } else {
+                None
+            };
 
             // S1/S3: Coherence
             let coherence = semantic_similarity::compute_coherence(thought, prev);
             all_coherence.push(coherence);
 
             // S2: Contradictions
-            let prev_claims: Vec<&str> = thoughts[..i].iter().map(|s: &String| s.as_str()).collect();
+            let prev_claims: Vec<&str> =
+                thoughts[..i].iter().map(|s: &String| s.as_str()).collect();
             let contra = contradiction_detector::detect_contradictions(thought, &prev_claims);
             total_contradictions += contra.contradictions.len();
 
@@ -951,17 +1093,35 @@ impl McpServer {
             all_grounding.push(grounding.grounding);
 
             // Per-step report
-            let coherence_icon = if coherence > 0.5 { "✅" } else if coherence > 0.2 { "⚠️" } else { "🔴" };
-            let novelty_icon = if novelty > 0.3 { "✅" } else if novelty > 0.1 { "⚠️" } else { "🔄" };
+            let coherence_icon = if coherence > 0.5 {
+                "✅"
+            } else if coherence > 0.2 {
+                "⚠️"
+            } else {
+                "🔴"
+            };
+            let novelty_icon = if novelty > 0.3 {
+                "✅"
+            } else if novelty > 0.1 {
+                "⚠️"
+            } else {
+                "🔄"
+            };
 
             output.push_str(&format!(
                 "**Step {}**: Coherence {} {:.0}% | Novelty {} {:.0}% | Grounding {:.0}%",
-                step, coherence_icon, coherence * 100.0,
-                novelty_icon, novelty * 100.0,
+                step,
+                coherence_icon,
+                coherence * 100.0,
+                novelty_icon,
+                novelty * 100.0,
                 grounding.grounding * 100.0
             ));
             if !contra.contradictions.is_empty() {
-                output.push_str(&format!(" | ⚡ {} contradictions", contra.contradictions.len()));
+                output.push_str(&format!(
+                    " | ⚡ {} contradictions",
+                    contra.contradictions.len()
+                ));
             }
             output.push('\n');
         }
@@ -977,17 +1137,33 @@ impl McpServer {
         };
 
         output.push_str("\n─── Summary ───\n");
-        output.push_str(&format!("📈 Avg coherence: {:.0}%\n", avg_coherence * 100.0));
-        output.push_str(&format!("💡 Avg novelty: {:.0}%\n", avg_novelty * 100.0));
-        output.push_str(&format!("📉 Novelty decay: {:.0}% ({})\n",
-            novelty_decay * 100.0,
-            if novelty_decay < -0.3 { "⚠️ high repetition" } else { "normal" }
+        output.push_str(&format!(
+            "📈 Avg coherence: {:.0}%\n",
+            avg_coherence * 100.0
         ));
-        output.push_str(&format!("🔗 Avg grounding: {:.0}%\n", avg_grounding * 100.0));
-        output.push_str(&format!("⚡ Total contradictions: {}\n", total_contradictions));
+        output.push_str(&format!("💡 Avg novelty: {:.0}%\n", avg_novelty * 100.0));
+        output.push_str(&format!(
+            "📉 Novelty decay: {:.0}% ({})\n",
+            novelty_decay * 100.0,
+            if novelty_decay < -0.3 {
+                "⚠️ high repetition"
+            } else {
+                "normal"
+            }
+        ));
+        output.push_str(&format!(
+            "🔗 Avg grounding: {:.0}%\n",
+            avg_grounding * 100.0
+        ));
+        output.push_str(&format!(
+            "⚡ Total contradictions: {}\n",
+            total_contradictions
+        ));
 
         // Overall verdict
-        let chain_quality = (avg_coherence * 0.3 + avg_novelty * 0.2 + avg_grounding * 0.3
+        let chain_quality = (avg_coherence * 0.3
+            + avg_novelty * 0.2
+            + avg_grounding * 0.3
             + (1.0 - total_contradictions as f64 / thoughts.len().max(1) as f64).max(0.0) * 0.2)
             .clamp(0.0, 1.0);
 
@@ -998,7 +1174,11 @@ impl McpServer {
         } else {
             "🔴 WEAK — Significant coherence or grounding gaps detected"
         };
-        output.push_str(&format!("\n🏆 Overall quality: {:.0}% — {}\n", chain_quality * 100.0, verdict));
+        output.push_str(&format!(
+            "\n🏆 Overall quality: {:.0}% — {}\n",
+            chain_quality * 100.0,
+            verdict
+        ));
 
         Ok(Some(serde_json::json!({
             "content": [{

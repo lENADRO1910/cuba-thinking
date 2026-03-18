@@ -1,0 +1,26 @@
+--- cuba_cognitive_engine/src/server/mcp_protocol.rs
++++ cuba_cognitive_engine/src/server/mcp_protocol.rs
+@@ -406,6 +406,20 @@
+         let arguments = params.arguments.clone().unwrap_or(serde_json::json!({}));
+         let hypothesis = arguments.get("hypothesis").and_then(Value::as_str).unwrap_or("...");
+         let thought = arguments.get("thought").and_then(Value::as_str).unwrap_or("...");
++
++        // Security: Prevent extremely large payloads (DoS protection)
++        const MAX_PAYLOAD_LEN: usize = 100_000; // 100KB
++        if thought.len() > MAX_PAYLOAD_LEN {
++            return Err(RpcError {
++                code: -32602,
++                message: format!("thought exceeds maximum length of {} bytes", MAX_PAYLOAD_LEN),
++                data: None,
++            });
++        }
++        if hypothesis.len() > MAX_PAYLOAD_LEN {
++            return Err(RpcError {
++                code: -32602,
++                message: format!("hypothesis exceeds maximum length of {} bytes", MAX_PAYLOAD_LEN),
++                data: None,
++            });
++        }
+
+         // Optional parameters from the AI
+         let confidence = arguments.get("confidence")

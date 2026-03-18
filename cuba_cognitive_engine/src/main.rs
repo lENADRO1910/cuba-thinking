@@ -15,12 +15,12 @@ async fn main() -> anyhow::Result<()> {
 
     tracing::info!("Booting Antigravity SOTA Deep Reasoning Engine (Rust v0.1.0)...");
 
-    // 2. Initialize the MCP Protocol Server 
+    // 2. Initialize the MCP Protocol Server
     // This replaces the entire Python layer.
     let mcp_server = std::sync::Arc::new(server::McpServer::new());
-    
+
     // 3. Block on the execution loop
     mcp_server.run().await?;
-    
+
     Ok(())
 }

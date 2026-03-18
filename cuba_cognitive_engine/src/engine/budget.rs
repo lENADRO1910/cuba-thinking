@@ -53,9 +53,9 @@ impl BudgetMode {
     pub fn mcts_threshold(self) -> f64 {
         match self {
             BudgetMode::Fast => 0.50,       // 50% — cut losses early
-            BudgetMode::Balanced => 0.40,    // 40% — default
-            BudgetMode::Thorough => 0.35,    // 35% — give chains room
-            BudgetMode::Exhaustive => 0.30,  // 30% — maximum exploration
+            BudgetMode::Balanced => 0.40,   // 40% — default
+            BudgetMode::Thorough => 0.35,   // 35% — give chains room
+            BudgetMode::Exhaustive => 0.30, // 30% — maximum exploration
         }
     }
 
@@ -118,8 +118,14 @@ mod tests {
     #[test]
     fn test_parse_modes() {
         assert_eq!(BudgetMode::from_str_opt(Some("fast")), BudgetMode::Fast);
-        assert_eq!(BudgetMode::from_str_opt(Some("thorough")), BudgetMode::Thorough);
-        assert_eq!(BudgetMode::from_str_opt(Some("invalid")), BudgetMode::Balanced);
+        assert_eq!(
+            BudgetMode::from_str_opt(Some("thorough")),
+            BudgetMode::Thorough
+        );
+        assert_eq!(
+            BudgetMode::from_str_opt(Some("invalid")),
+            BudgetMode::Balanced
+        );
         assert_eq!(BudgetMode::from_str_opt(None), BudgetMode::Balanced);
     }
 

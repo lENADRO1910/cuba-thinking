@@ -51,7 +51,12 @@ pub struct Directive {
 
 impl Directive {
     pub fn display(&self) -> String {
-        format!("{} **{}**: {}", self.severity.emoji(), self.dimension, self.instruction)
+        format!(
+            "{} **{}**: {}",
+            self.severity.emoji(),
+            self.dimension,
+            self.instruction
+        )
     }
 }
 
@@ -76,7 +81,9 @@ pub fn generate_directives(
         directives.push(Directive {
             severity: severity_for(quality.depth),
             dimension: "Depth",
-            instruction: "Add causal chains: 'because X → therefore Y'. Include second-order reasoning.".to_string(),
+            instruction:
+                "Add causal chains: 'because X → therefore Y'. Include second-order reasoning."
+                    .to_string(),
         });
     }
 
@@ -92,7 +99,9 @@ pub fn generate_directives(
         directives.push(Directive {
             severity: severity_for(quality.actionability),
             dimension: "Actionability",
-            instruction: "Include specific data: numbers, file paths, function names, concrete measurements.".to_string(),
+            instruction:
+                "Include specific data: numbers, file paths, function names, concrete measurements."
+                    .to_string(),
         });
     }
 
@@ -100,7 +109,8 @@ pub fn generate_directives(
         directives.push(Directive {
             severity: severity_for(quality.clarity),
             dimension: "Clarity",
-            instruction: "Reduce vocabulary repetition. Vary sentence opening words. Use synonyms.".to_string(),
+            instruction: "Reduce vocabulary repetition. Vary sentence opening words. Use synonyms."
+                .to_string(),
         });
     }
 
@@ -195,10 +205,7 @@ pub fn generate_directives(
 /// Injects an explicit self-evaluation prompt when trust is low,
 /// forcing the agent to question its assumptions before continuing.
 /// Only activates after thought #3 with trust < 50% to avoid overhead.
-pub fn generate_reflexion_directive(
-    trust_score: f64,
-    thought_number: usize,
-) -> Option<Directive> {
+pub fn generate_reflexion_directive(trust_score: f64, thought_number: usize) -> Option<Directive> {
     if trust_score >= 0.50 || thought_number <= 3 {
         return None;
     }
@@ -251,7 +258,9 @@ fn severity_for(score: f64) -> Severity {
 
 /// Check if any directive is mandatory (Correction severity).
 pub fn has_mandatory_corrections(directives: &[Directive]) -> bool {
-    directives.iter().any(|d| d.severity == Severity::Correction)
+    directives
+        .iter()
+        .any(|d| d.severity == Severity::Correction)
 }
 
 /// Format all directives for display.
@@ -306,40 +315,68 @@ mod tests {
     #[test]
     fn test_no_directives_when_quality_high() {
         let quality = QualityScores {
-            clarity: 0.8, depth: 0.7, breadth: 0.6,
-            logic: 0.9, relevance: 0.8, actionability: 0.7,
+            clarity: 0.8,
+            depth: 0.7,
+            breadth: 0.6,
+            logic: 0.9,
+            relevance: 0.8,
+            actionability: 0.7,
         };
-        let directives = generate_directives(&quality, &default_verdict(), &default_metacog(), 3, false);
-        assert!(directives.is_empty(), "Should have no directives for high quality");
+        let directives =
+            generate_directives(&quality, &default_verdict(), &default_metacog(), 3, false);
+        assert!(
+            directives.is_empty(),
+            "Should have no directives for high quality"
+        );
     }
 
     #[test]
     fn test_depth_directive_when_low() {
         let quality = QualityScores {
-            clarity: 0.8, depth: 0.1, breadth: 0.8,
-            logic: 0.9, relevance: 0.8, actionability: 0.7,
+            clarity: 0.8,
+            depth: 0.1,
+            breadth: 0.8,
+            logic: 0.9,
+            relevance: 0.8,
+            actionability: 0.7,
         };
-        let directives = generate_directives(&quality, &default_verdict(), &default_metacog(), 3, false);
+        let directives =
+            generate_directives(&quality, &default_verdict(), &default_metacog(), 3, false);
         assert!(!directives.is_empty());
         assert!(directives.iter().any(|d| d.dimension == "Depth"));
-        assert!(directives.iter().any(|d| d.severity == Severity::Correction));
+        assert!(directives
+            .iter()
+            .any(|d| d.severity == Severity::Correction));
     }
 
     #[test]
     fn test_multiple_weak_dimensions() {
         let quality = QualityScores {
-            clarity: 0.2, depth: 0.15, breadth: 0.1,
-            logic: 0.25, relevance: 0.3, actionability: 0.1,
+            clarity: 0.2,
+            depth: 0.15,
+            breadth: 0.1,
+            logic: 0.25,
+            relevance: 0.3,
+            actionability: 0.1,
         };
-        let directives = generate_directives(&quality, &default_verdict(), &default_metacog(), 3, false);
-        assert!(directives.len() >= 5, "Should flag multiple weak dims: {}", directives.len());
+        let directives =
+            generate_directives(&quality, &default_verdict(), &default_metacog(), 3, false);
+        assert!(
+            directives.len() >= 5,
+            "Should flag multiple weak dims: {}",
+            directives.len()
+        );
     }
 
     #[test]
     fn test_grounding_directive() {
         let quality = QualityScores {
-            clarity: 0.8, depth: 0.8, breadth: 0.8,
-            logic: 0.8, relevance: 0.8, actionability: 0.8,
+            clarity: 0.8,
+            depth: 0.8,
+            breadth: 0.8,
+            logic: 0.8,
+            relevance: 0.8,
+            actionability: 0.8,
         };
         let mut verdict = default_verdict();
         verdict.layers.grounding_ratio = 0.1;
@@ -352,18 +389,27 @@ mod tests {
     #[test]
     fn test_decomposition_directive_for_complex() {
         let quality = QualityScores {
-            clarity: 0.8, depth: 0.8, breadth: 0.8,
-            logic: 0.8, relevance: 0.8, actionability: 0.8,
+            clarity: 0.8,
+            depth: 0.8,
+            breadth: 0.8,
+            logic: 0.8,
+            relevance: 0.8,
+            actionability: 0.8,
         };
-        let directives = generate_directives(&quality, &default_verdict(), &default_metacog(), 8, false);
+        let directives =
+            generate_directives(&quality, &default_verdict(), &default_metacog(), 8, false);
         assert!(directives.iter().any(|d| d.dimension == "Decomposition"));
     }
 
     #[test]
     fn test_filler_directive() {
         let quality = QualityScores {
-            clarity: 0.8, depth: 0.8, breadth: 0.8,
-            logic: 0.8, relevance: 0.8, actionability: 0.8,
+            clarity: 0.8,
+            depth: 0.8,
+            breadth: 0.8,
+            logic: 0.8,
+            relevance: 0.8,
+            actionability: 0.8,
         };
         let mut metacog = default_metacog();
         metacog.filler_ratio = 0.25;
@@ -375,8 +421,12 @@ mod tests {
     #[test]
     fn test_dialectical_directive() {
         let quality = QualityScores {
-            clarity: 0.8, depth: 0.8, breadth: 0.8,
-            logic: 0.8, relevance: 0.8, actionability: 0.8,
+            clarity: 0.8,
+            depth: 0.8,
+            breadth: 0.8,
+            logic: 0.8,
+            relevance: 0.8,
+            actionability: 0.8,
         };
         let mut metacog = default_metacog();
         metacog.has_dialectical = false;
@@ -388,17 +438,27 @@ mod tests {
     #[test]
     fn test_has_mandatory_corrections() {
         let directives = vec![
-            Directive { severity: Severity::Info, dimension: "Test", instruction: "test".to_string() },
-            Directive { severity: Severity::Correction, dimension: "Test2", instruction: "test2".to_string() },
+            Directive {
+                severity: Severity::Info,
+                dimension: "Test",
+                instruction: "test".to_string(),
+            },
+            Directive {
+                severity: Severity::Correction,
+                dimension: "Test2",
+                instruction: "test2".to_string(),
+            },
         ];
         assert!(has_mandatory_corrections(&directives));
     }
 
     #[test]
     fn test_no_mandatory_corrections() {
-        let directives = vec![
-            Directive { severity: Severity::Info, dimension: "Test", instruction: "test".to_string() },
-        ];
+        let directives = vec![Directive {
+            severity: Severity::Info,
+            dimension: "Test",
+            instruction: "test".to_string(),
+        }];
         assert!(!has_mandatory_corrections(&directives));
     }
 

@@ -13,8 +13,8 @@
 // 5. High novelty = thought introduces genuinely fresh concepts
 // 6. Low novelty = thought repeats or paraphrases what's already been said
 
-use std::collections::HashSet;
 use serde::Serialize;
+use std::collections::HashSet;
 
 /// Tracks cumulative vocabulary for novelty computation.
 #[derive(Debug, Clone, Serialize)]
@@ -136,9 +136,8 @@ mod tests {
     #[test]
     fn test_first_thought_high_novelty() {
         let mut tracker = NoveltyTracker::new();
-        let novelty = tracker.track_novelty(
-            "Implement database migration with zero downtime using PostgreSQL",
-        );
+        let novelty = tracker
+            .track_novelty("Implement database migration with zero downtime using PostgreSQL");
         assert_eq!(
             novelty, 1.0,
             "First thought should have 100% novelty: {:.3}",
@@ -181,7 +180,8 @@ mod tests {
         assert!(
             n3 < n1,
             "Repeated vocabulary should show lower novelty: {} < {}",
-            n3, n1
+            n3,
+            n1
         );
     }
 

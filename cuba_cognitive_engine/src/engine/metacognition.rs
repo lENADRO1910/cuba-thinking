@@ -10,8 +10,8 @@
 // - Content-word ratio / Verbosity (V3, Graesser 2004 — Coh-Metrix)
 
 use serde::Serialize;
-use std::sync::LazyLock;
 use std::collections::HashSet;
+use std::sync::LazyLock;
 
 /// Metacognitive analysis results.
 #[derive(Debug, Clone, Serialize)]
@@ -37,10 +37,7 @@ pub struct DetectedFallacy {
 }
 
 /// Perform metacognitive analysis on a thought.
-pub fn analyze_metacognition(
-    thought: &str,
-    is_verify_or_synthesize: bool,
-) -> MetacognitiveReport {
+pub fn analyze_metacognition(thought: &str, is_verify_or_synthesize: bool) -> MetacognitiveReport {
     let filler_ratio = compute_filler_ratio(thought);
     let cwr = compute_content_word_ratio(thought);
     let claim_density = compute_claim_density(thought);
@@ -99,14 +96,42 @@ fn compute_filler_ratio(text: &str) -> f64 {
     }
 
     let fillers = [
-        "basically", "actually", "literally", "really", "just",
-        "quite", "rather", "somewhat", "pretty", "kind", "sort",
-        "honestly", "certainly", "definitely", "absolutely",
-        "essentially", "fundamentally", "obviously", "clearly",
-        "simply", "merely", "well", "so", "like", "you know",
-        "i think", "i believe", "i feel", "in my opinion",
-        "básicamente", "realmente", "simplemente", "obviamente",
-        "claramente", "ciertamente", "definitivamente",
+        "basically",
+        "actually",
+        "literally",
+        "really",
+        "just",
+        "quite",
+        "rather",
+        "somewhat",
+        "pretty",
+        "kind",
+        "sort",
+        "honestly",
+        "certainly",
+        "definitely",
+        "absolutely",
+        "essentially",
+        "fundamentally",
+        "obviously",
+        "clearly",
+        "simply",
+        "merely",
+        "well",
+        "so",
+        "like",
+        "you know",
+        "i think",
+        "i believe",
+        "i feel",
+        "in my opinion",
+        "básicamente",
+        "realmente",
+        "simplemente",
+        "obviamente",
+        "claramente",
+        "ciertamente",
+        "definitivamente",
     ];
 
     let filler_count = words
@@ -127,19 +152,17 @@ fn compute_filler_ratio(text: &str) -> f64 {
 fn compute_content_word_ratio(text: &str) -> f64 {
     static FUNCTION_WORDS: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
         [
-            "the", "a", "an", "is", "are", "was", "were", "be", "been", "being",
-            "have", "has", "had", "do", "does", "did", "will", "would", "could",
-            "should", "may", "might", "can", "shall", "must", "to", "of", "in",
-            "for", "on", "with", "at", "by", "from", "as", "into", "through",
-            "during", "before", "after", "above", "below", "between", "and",
-            "but", "or", "nor", "not", "so", "yet", "both", "either", "neither",
-            "it", "its", "this", "that", "these", "those", "he", "she", "we",
-            "they", "them", "their", "my", "your", "our", "i", "me", "you",
-            // Spanish function words
-            "el", "la", "los", "las", "un", "una", "unos", "unas", "de", "del",
-            "en", "con", "por", "para", "sin", "sobre", "entre", "y", "o", "ni",
-            "que", "se", "lo", "le", "les", "su", "sus", "mi", "tu", "nos",
-            "es", "son", "fue", "ser", "estar", "hay", "como", "más", "no",
+            "the", "a", "an", "is", "are", "was", "were", "be", "been", "being", "have", "has",
+            "had", "do", "does", "did", "will", "would", "could", "should", "may", "might", "can",
+            "shall", "must", "to", "of", "in", "for", "on", "with", "at", "by", "from", "as",
+            "into", "through", "during", "before", "after", "above", "below", "between", "and",
+            "but", "or", "nor", "not", "so", "yet", "both", "either", "neither", "it", "its",
+            "this", "that", "these", "those", "he", "she", "we", "they", "them", "their", "my",
+            "your", "our", "i", "me", "you", // Spanish function words
+            "el", "la", "los", "las", "un", "una", "unos", "unas", "de", "del", "en", "con", "por",
+            "para", "sin", "sobre", "entre", "y", "o", "ni", "que", "se", "lo", "le", "les", "su",
+            "sus", "mi", "tu", "nos", "es", "son", "fue", "ser", "estar", "hay", "como", "más",
+            "no",
         ]
         .iter()
         .copied()
@@ -176,11 +199,32 @@ fn compute_claim_density(text: &str) -> f64 {
 
     // Claim indicators: numbers, comparisons, specific assertions
     let claim_markers = [
-        "is", "are", "was", "causes", "results in", "equals",
-        "greater than", "less than", "requires", "must", "always",
-        "never", "every", "%", "=", ">", "<",
-        "es", "son", "causa", "resulta en", "requiere", "siempre",
-        "nunca", "cada", "todo",
+        "is",
+        "are",
+        "was",
+        "causes",
+        "results in",
+        "equals",
+        "greater than",
+        "less than",
+        "requires",
+        "must",
+        "always",
+        "never",
+        "every",
+        "%",
+        "=",
+        ">",
+        "<",
+        "es",
+        "son",
+        "causa",
+        "resulta en",
+        "requiere",
+        "siempre",
+        "nunca",
+        "cada",
+        "todo",
     ];
 
     let claims: usize = sentences
@@ -206,7 +250,9 @@ fn detect_fallacies(text: &str) -> Vec<DetectedFallacy> {
     let mut fallacies = Vec::new();
 
     // Hasty Generalization: "all X are Y", "every X is Y" without evidence
-    let hasty_markers = ["all ", "every ", "always ", "never ", "todos ", "siempre ", "nunca "];
+    let hasty_markers = [
+        "all ", "every ", "always ", "never ", "todos ", "siempre ", "nunca ",
+    ];
     for marker in &hasty_markers {
         if let Some(pos) = lower.find(marker) {
             let snippet = &text[pos..text.len().min(pos + 60)];
@@ -248,11 +294,26 @@ fn detect_fallacies(text: &str) -> Vec<DetectedFallacy> {
 fn check_dialectical(text: &str) -> bool {
     let lower = text.to_lowercase();
     let counter_markers = [
-        "however", "on the other hand", "alternatively", "counter",
-        "against", "drawback", "limitation", "risk", "weakness",
-        "trade-off", "downside", "challenge", "caveat",
-        "sin embargo", "por otro lado", "alternativamente",
-        "en contra", "limitación", "riesgo", "desventaja",
+        "however",
+        "on the other hand",
+        "alternatively",
+        "counter",
+        "against",
+        "drawback",
+        "limitation",
+        "risk",
+        "weakness",
+        "trade-off",
+        "downside",
+        "challenge",
+        "caveat",
+        "sin embargo",
+        "por otro lado",
+        "alternativamente",
+        "en contra",
+        "limitación",
+        "riesgo",
+        "desventaja",
     ];
     counter_markers.iter().any(|m| lower.contains(m))
 }
@@ -287,22 +348,47 @@ pub fn classify_reasoning_type(thought: &str) -> ReasoningType {
     let lower = thought.to_lowercase();
 
     let deductive_kw = [
-        "therefore", "must be", "necessarily", "follows that", "proves",
-        "if and only if", "by definition", "logically", "deduction",
+        "therefore",
+        "must be",
+        "necessarily",
+        "follows that",
+        "proves",
+        "if and only if",
+        "by definition",
+        "logically",
+        "deduction",
     ];
     let inductive_kw = [
-        "pattern suggests", "in most cases", "evidence shows", "likely",
-        "tends to", "usually", "observed that", "data indicates",
-        "correlation", "frequency",
+        "pattern suggests",
+        "in most cases",
+        "evidence shows",
+        "likely",
+        "tends to",
+        "usually",
+        "observed that",
+        "data indicates",
+        "correlation",
+        "frequency",
     ];
     let abductive_kw = [
-        "best explanation", "probably because", "hypothesis is",
-        "could be explained by", "most likely cause", "plausible",
-        "inference to", "suggests that",
+        "best explanation",
+        "probably because",
+        "hypothesis is",
+        "could be explained by",
+        "most likely cause",
+        "plausible",
+        "inference to",
+        "suggests that",
     ];
     let analogical_kw = [
-        "similar to", "just as", "comparable", "analogous",
-        "like", "resembles", "parallels", "same way",
+        "similar to",
+        "just as",
+        "comparable",
+        "analogous",
+        "like",
+        "resembles",
+        "parallels",
+        "same way",
     ];
 
     let d: usize = deductive_kw.iter().filter(|k| lower.contains(**k)).count();
@@ -323,10 +409,15 @@ pub fn classify_reasoning_type(thought: &str) -> ReasoningType {
         return ReasoningType::Mixed;
     }
 
-    if d == max { ReasoningType::Deductive }
-    else if i == max { ReasoningType::Inductive }
-    else if a == max { ReasoningType::Abductive }
-    else { ReasoningType::Analogical }
+    if d == max {
+        ReasoningType::Deductive
+    } else if i == max {
+        ReasoningType::Inductive
+    } else if a == max {
+        ReasoningType::Abductive
+    } else {
+        ReasoningType::Analogical
+    }
 }
 
 #[cfg(test)]

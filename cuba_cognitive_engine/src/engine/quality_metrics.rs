@@ -39,17 +39,18 @@ impl QualityScores {
             self.actionability,
         ];
         let total_weight: f64 = boosts.iter().sum();
-        let weighted_sum: f64 = scores
-            .iter()
-            .zip(boosts.iter())
-            .map(|(s, w)| s * w)
-            .sum();
+        let weighted_sum: f64 = scores.iter().zip(boosts.iter()).map(|(s, w)| s * w).sum();
         weighted_sum / total_weight
     }
 
     /// Raw unweighted mean across all 6 dimensions.
     pub fn raw_mean(&self) -> f64 {
-        (self.clarity + self.depth + self.breadth + self.logic + self.relevance + self.actionability)
+        (self.clarity
+            + self.depth
+            + self.breadth
+            + self.logic
+            + self.relevance
+            + self.actionability)
             / 6.0
     }
 }
@@ -94,10 +95,13 @@ fn compute_word_entropy(text: &str) -> f64 {
         *counts.entry(lower).or_insert(0_f64) += 1.0;
     }
 
-    let entropy: f64 = counts.values().map(|&c| {
-        let p = c / total;
-        -p * p.log2()
-    }).sum();
+    let entropy: f64 = counts
+        .values()
+        .map(|&c| {
+            let p = c / total;
+            -p * p.log2()
+        })
+        .sum();
 
     let unique = counts.len().max(2) as f64;
     let max_entropy = unique.log2().max(1e-5);
@@ -163,7 +167,11 @@ fn compute_lz76_complexity(text: &str) -> f64 {
 /// - Padding triggers when EITHER metric indicates low information density.
 ///
 /// When padding detected, K increases 4× (0.08 vs 0.02).
-pub fn apply_length_penalty(quality: QualityScores, thought: &str, budget: crate::engine::budget::BudgetMode) -> QualityScores {
+pub fn apply_length_penalty(
+    quality: QualityScores,
+    thought: &str,
+    budget: crate::engine::budget::BudgetMode,
+) -> QualityScores {
     let word_count = thought.split_whitespace().count();
     let threshold = budget.length_penalty_threshold();
 
@@ -253,8 +261,8 @@ fn compute_flesch_kincaid(words: &[&str], sentences: &[&str]) -> f64 {
     let num_words = words.len().max(1) as f64;
     let total_syllables: f64 = words.iter().map(|w| count_syllables(w) as f64).sum();
 
-    let asl = num_words / num_sentences;           // Average Sentence Length
-    let asw = total_syllables / num_words;          // Average Syllables per Word
+    let asl = num_words / num_sentences; // Average Sentence Length
+    let asw = total_syllables / num_words; // Average Syllables per Word
 
     let fk = 206.835 - 1.015 * asl - 84.6 * asw;
     // Normalize: FK 100 → 1.0 (very easy), FK 0 → 0.0 (very hard)
@@ -283,7 +291,11 @@ fn count_syllables(word: &str) -> usize {
     }
 
     // Silent 'e' at end (except -le, -ee, -ie)
-    if word.ends_with('e') && !word.ends_with("le") && !word.ends_with("ee") && !word.ends_with("ie") {
+    if word.ends_with('e')
+        && !word.ends_with("le")
+        && !word.ends_with("ee")
+        && !word.ends_with("ie")
+    {
         count = count.saturating_sub(1);
     }
 
@@ -327,16 +339,26 @@ fn compute_depth(text: &str, is_code: bool) -> f64 {
 
     // Subordinate clause markers
     let clause_markers = [
-        "because", "since", "although", "whereas", "while", "unless",
-        "if", "when", "after", "before", "that", "which", "who",
-        "donde", "porque", "aunque", "mientras", "cuando", "si",
+        "because", "since", "although", "whereas", "while", "unless", "if", "when", "after",
+        "before", "that", "which", "who", "donde", "porque", "aunque", "mientras", "cuando", "si",
     ];
 
     // Causal reasoning markers
     let causal_markers = [
-        "therefore", "thus", "hence", "consequently", "as a result",
-        "implies", "causes", "leads to", "results in", "due to",
-        "por lo tanto", "en consecuencia", "implica", "causa",
+        "therefore",
+        "thus",
+        "hence",
+        "consequently",
+        "as a result",
+        "implies",
+        "causes",
+        "leads to",
+        "results in",
+        "due to",
+        "por lo tanto",
+        "en consecuencia",
+        "implica",
+        "causa",
     ];
 
     let clause_count = clause_markers
@@ -383,27 +405,46 @@ fn compute_code_depth(text: &str) -> f64 {
     score += (max_indent as f64 / 16.0).min(0.3);
 
     // Assertions and error handling = reasoning depth
-    let assertion_count = lines.iter().filter(|l| {
-        let t = l.trim();
-        t.starts_with("assert") || t.contains("assert_eq") || t.contains("assert!")
-            || t.starts_with("raise") || t.starts_with("return Err")
-    }).count();
+    let assertion_count = lines
+        .iter()
+        .filter(|l| {
+            let t = l.trim();
+            t.starts_with("assert")
+                || t.contains("assert_eq")
+                || t.contains("assert!")
+                || t.starts_with("raise")
+                || t.starts_with("return Err")
+        })
+        .count();
     score += (assertion_count as f64 * 0.1).min(0.3);
 
     // Control flow complexity (if/for/while/match)
-    let control_flow = lines.iter().filter(|l| {
-        let t = l.trim();
-        t.starts_with("if ") || t.starts_with("for ") || t.starts_with("while ")
-            || t.starts_with("match ") || t.starts_with("elif ") || t.starts_with("else")
-    }).count();
+    let control_flow = lines
+        .iter()
+        .filter(|l| {
+            let t = l.trim();
+            t.starts_with("if ")
+                || t.starts_with("for ")
+                || t.starts_with("while ")
+                || t.starts_with("match ")
+                || t.starts_with("elif ")
+                || t.starts_with("else")
+        })
+        .count();
     score += (control_flow as f64 / non_empty as f64).min(0.2);
 
     // Function/class definitions = structural organization
-    let definitions = lines.iter().filter(|l| {
-        let t = l.trim();
-        t.starts_with("def ") || t.starts_with("fn ") || t.starts_with("class ")
-            || t.starts_with("pub fn ") || t.starts_with("impl ")
-    }).count();
+    let definitions = lines
+        .iter()
+        .filter(|l| {
+            let t = l.trim();
+            t.starts_with("def ")
+                || t.starts_with("fn ")
+                || t.starts_with("class ")
+                || t.starts_with("pub fn ")
+                || t.starts_with("impl ")
+        })
+        .count();
     score += (definitions as f64 * 0.05).min(0.2);
 
     score.clamp(0.0, 1.0)
@@ -445,10 +486,25 @@ fn compute_breadth(text: &str) -> f64 {
 
     // Also check for domain markers (technical terms hint at breadth)
     let domain_markers = [
-        "database", "api", "server", "client", "cache", "queue",
-        "model", "schema", "endpoint", "middleware", "service",
-        "algorithm", "pattern", "architecture", "protocol",
-        "base de datos", "servidor", "algoritmo", "patrón",
+        "database",
+        "api",
+        "server",
+        "client",
+        "cache",
+        "queue",
+        "model",
+        "schema",
+        "endpoint",
+        "middleware",
+        "service",
+        "algorithm",
+        "pattern",
+        "architecture",
+        "protocol",
+        "base de datos",
+        "servidor",
+        "algoritmo",
+        "patrón",
     ];
     let domain_count = domain_markers
         .iter()
@@ -467,11 +523,45 @@ fn compute_logic(text: &str) -> f64 {
     let lower = text.to_lowercase();
 
     // Different types of logical connectives
-    let additive = ["and", "also", "furthermore", "moreover", "additionally", "además", "también"];
-    let contrastive = ["but", "however", "although", "yet", "nevertheless", "pero", "sin embargo"];
-    let causal = ["because", "therefore", "thus", "so", "hence", "porque", "por lo tanto"];
-    let conditional = ["if", "unless", "when", "provided", "assuming", "si", "a menos que"];
-    let sequential = ["first", "then", "next", "finally", "after", "primero", "luego", "después"];
+    let additive = [
+        "and",
+        "also",
+        "furthermore",
+        "moreover",
+        "additionally",
+        "además",
+        "también",
+    ];
+    let contrastive = [
+        "but",
+        "however",
+        "although",
+        "yet",
+        "nevertheless",
+        "pero",
+        "sin embargo",
+    ];
+    let causal = [
+        "because",
+        "therefore",
+        "thus",
+        "so",
+        "hence",
+        "porque",
+        "por lo tanto",
+    ];
+    let conditional = [
+        "if",
+        "unless",
+        "when",
+        "provided",
+        "assuming",
+        "si",
+        "a menos que",
+    ];
+    let sequential = [
+        "first", "then", "next", "finally", "after", "primero", "luego", "después",
+    ];
 
     let categories_present = [
         additive.iter().any(|c| lower.contains(c)),
@@ -485,8 +575,15 @@ fn compute_logic(text: &str) -> f64 {
 
     // Check for conclusion presence (strong logical structure indicator)
     let has_conclusion = [
-        "therefore", "in conclusion", "recommend", "the best",
-        "should", "must", "por lo tanto", "en conclusión", "recomend",
+        "therefore",
+        "in conclusion",
+        "recommend",
+        "the best",
+        "should",
+        "must",
+        "por lo tanto",
+        "en conclusión",
+        "recomend",
     ]
     .iter()
     .any(|c| lower.contains(c));
@@ -538,27 +635,55 @@ fn compute_actionability(text: &str, is_code: bool) -> f64 {
     // F16: Code inputs get automatic actionability boost
     if is_code {
         let mut score: f64 = 0.3; // Base: code IS actionable by nature
-        // Assertions = verifiable
+                                  // Assertions = verifiable
         let has_asserts = lower.contains("assert");
-        if has_asserts { score += 0.2; }
+        if has_asserts {
+            score += 0.2;
+        }
         // Return values = concrete output
         let has_return = lower.contains("return ");
-        if has_return { score += 0.1; }
+        if has_return {
+            score += 0.1;
+        }
         // Numbers/constants
-        if text.chars().any(|c| c.is_ascii_digit()) { score += 0.1; }
+        if text.chars().any(|c| c.is_ascii_digit()) {
+            score += 0.1;
+        }
         // Function definitions
-        if lower.contains("def ") || lower.contains("fn ") { score += 0.1; }
+        if lower.contains("def ") || lower.contains("fn ") {
+            score += 0.1;
+        }
         // Imports = concrete dependencies
-        if lower.contains("import ") || lower.contains("use ") { score += 0.1; }
+        if lower.contains("import ") || lower.contains("use ") {
+            score += 0.1;
+        }
         return score.clamp(0.0, 1.0);
     }
 
     // Imperative verbs / action language
     let imperative_markers = [
-        "implement", "create", "add", "remove", "modify", "use",
-        "run", "build", "deploy", "configure", "set", "update",
-        "implementar", "crear", "agregar", "eliminar", "modificar",
-        "usar", "ejecutar", "construir", "configurar", "actualizar",
+        "implement",
+        "create",
+        "add",
+        "remove",
+        "modify",
+        "use",
+        "run",
+        "build",
+        "deploy",
+        "configure",
+        "set",
+        "update",
+        "implementar",
+        "crear",
+        "agregar",
+        "eliminar",
+        "modificar",
+        "usar",
+        "ejecutar",
+        "construir",
+        "configurar",
+        "actualizar",
     ];
 
     let imperative_count = imperative_markers
@@ -573,18 +698,26 @@ fn compute_actionability(text: &str, is_code: bool) -> f64 {
 
     // Vagueness penalty
     let vague_markers = [
-        "maybe", "perhaps", "probably", "might", "somehow",
-        "something", "somehow", "kind of", "sort of",
-        "quizás", "tal vez", "probablemente", "algo así",
+        "maybe",
+        "perhaps",
+        "probably",
+        "might",
+        "somehow",
+        "something",
+        "somehow",
+        "kind of",
+        "sort of",
+        "quizás",
+        "tal vez",
+        "probablemente",
+        "algo así",
     ];
-    let vague_count = vague_markers
-        .iter()
-        .filter(|m| lower.contains(**m))
-        .count();
+    let vague_count = vague_markers.iter().filter(|m| lower.contains(**m)).count();
 
     let action_score = (imperative_count as f64 * 0.1).min(0.5);
-    let specificity_score =
-        (has_numbers as u8 as f64 * 0.15) + (has_code as u8 as f64 * 0.15) + (has_path as u8 as f64 * 0.1);
+    let specificity_score = (has_numbers as u8 as f64 * 0.15)
+        + (has_code as u8 as f64 * 0.15)
+        + (has_path as u8 as f64 * 0.1);
     let vague_penalty = (vague_count as f64 * 0.1).min(0.3);
 
     (action_score + specificity_score - vague_penalty).clamp(0.0, 1.0)
@@ -641,7 +774,11 @@ mod tests {
         let keywords = vec!["quantum", "physics"];
         let text = "The database migration requires updating the schema.";
         let relevance = compute_relevance(text, &keywords);
-        assert!(relevance < 0.1, "Expected low relevance, got {:.2}", relevance);
+        assert!(
+            relevance < 0.1,
+            "Expected low relevance, got {:.2}",
+            relevance
+        );
     }
 
     #[test]
@@ -701,8 +838,12 @@ mod tests {
         use crate::engine::budget::BudgetMode;
 
         let base = QualityScores {
-            clarity: 0.8, depth: 0.7, breadth: 0.6,
-            logic: 0.8, relevance: 0.7, actionability: 0.6,
+            clarity: 0.8,
+            depth: 0.7,
+            breadth: 0.6,
+            logic: 0.8,
+            relevance: 0.7,
+            actionability: 0.6,
         };
         let stage = CognitiveStage::Analyze;
 
@@ -711,15 +852,26 @@ mod tests {
         let result_short = apply_length_penalty(base.clone(), short, BudgetMode::Balanced);
         let wm_short = result_short.weighted_mean(stage);
         let wm_base = base.weighted_mean(stage);
-        assert!((wm_short - wm_base).abs() < 0.01,
-            "Short should have no penalty: base={:.3} after={:.3}", wm_base, wm_short);
+        assert!(
+            (wm_short - wm_base).abs() < 0.01,
+            "Short should have no penalty: base={:.3} after={:.3}",
+            wm_base,
+            wm_short
+        );
 
         // Very long text (2000 words): should have measurable penalty
-        let long: String = (0..2000).map(|i| format!("word{}", i)).collect::<Vec<_>>().join(" ");
+        let long: String = (0..2000)
+            .map(|i| format!("word{}", i))
+            .collect::<Vec<_>>()
+            .join(" ");
         let result_long = apply_length_penalty(base.clone(), &long, BudgetMode::Balanced);
         let wm_long = result_long.weighted_mean(stage);
-        assert!(wm_long < wm_base * 0.85,
-            "Long text should have penalty: base={:.3} after={:.3}", wm_base, wm_long);
+        assert!(
+            wm_long < wm_base * 0.85,
+            "Long text should have penalty: base={:.3} after={:.3}",
+            wm_base,
+            wm_long
+        );
     }
 
     #[test]
@@ -727,20 +879,35 @@ mod tests {
         use crate::engine::budget::BudgetMode;
 
         let base = QualityScores {
-            clarity: 0.8, depth: 0.7, breadth: 0.6,
-            logic: 0.8, relevance: 0.7, actionability: 0.6,
+            clarity: 0.8,
+            depth: 0.7,
+            breadth: 0.6,
+            logic: 0.8,
+            relevance: 0.7,
+            actionability: 0.6,
         };
         let stage = CognitiveStage::Analyze;
 
         // Penalty should decrease quality monotonically as length increases
         let lengths = [50, 200, 500, 1000, 2000];
-        let scores: Vec<f64> = lengths.iter().map(|&n| {
-            let text: String = (0..n).map(|i| format!("w{}", i)).collect::<Vec<_>>().join(" ");
-            let result = apply_length_penalty(base.clone(), &text, BudgetMode::Balanced);
-            result.weighted_mean(stage)
-        }).collect();
+        let scores: Vec<f64> = lengths
+            .iter()
+            .map(|&n| {
+                let text: String = (0..n)
+                    .map(|i| format!("w{}", i))
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                let result = apply_length_penalty(base.clone(), &text, BudgetMode::Balanced);
+                result.weighted_mean(stage)
+            })
+            .collect();
         for w in scores.windows(2) {
-            assert!(w[0] >= w[1], "Longer text should have lower score: {:.3} >= {:.3}", w[0], w[1]);
+            assert!(
+                w[0] >= w[1],
+                "Longer text should have lower score: {:.3} >= {:.3}",
+                w[0],
+                w[1]
+            );
         }
     }
 
@@ -749,16 +916,24 @@ mod tests {
     fn test_word_entropy_pure_padding() {
         // Pure repetition → entropy ≈ 0
         let entropy = super::compute_word_entropy("word word word word word word");
-        assert!(entropy < 0.01, "Pure padding should have near-zero entropy: {:.3}", entropy);
+        assert!(
+            entropy < 0.01,
+            "Pure padding should have near-zero entropy: {:.3}",
+            entropy
+        );
     }
 
     #[test]
     fn test_word_entropy_diverse_text() {
         // Diverse analysis → high entropy
         let entropy = super::compute_word_entropy(
-            "PostgreSQL B-tree index provides logarithmic lookup reducing query latency"
+            "PostgreSQL B-tree index provides logarithmic lookup reducing query latency",
         );
-        assert!(entropy > 0.85, "Diverse text should have high entropy: {:.3}", entropy);
+        assert!(
+            entropy > 0.85,
+            "Diverse text should have high entropy: {:.3}",
+            entropy
+        );
     }
 
     #[test]
@@ -771,8 +946,12 @@ mod tests {
         use crate::engine::budget::BudgetMode;
 
         let base = QualityScores {
-            clarity: 0.8, depth: 0.7, breadth: 0.6,
-            logic: 0.8, relevance: 0.7, actionability: 0.6,
+            clarity: 0.8,
+            depth: 0.7,
+            breadth: 0.6,
+            logic: 0.8,
+            relevance: 0.7,
+            actionability: 0.6,
         };
         let stage = CognitiveStage::Analyze;
 
@@ -793,9 +972,12 @@ mod tests {
         let result_diverse = apply_length_penalty(base.clone(), &diverse, BudgetMode::Balanced);
 
         // Padded should be penalized MORE than diverse (steeper K)
-        assert!(result_padded.weighted_mean(stage) < result_diverse.weighted_mean(stage),
+        assert!(
+            result_padded.weighted_mean(stage) < result_diverse.weighted_mean(stage),
             "Padded text should get heavier penalty: padded={:.3} diverse={:.3}",
-            result_padded.weighted_mean(stage), result_diverse.weighted_mean(stage));
+            result_padded.weighted_mean(stage),
+            result_diverse.weighted_mean(stage)
+        );
     }
 
     // ─── L2: Lempel-Ziv LZ76 Complexity Tests ────────
@@ -804,28 +986,51 @@ mod tests {
         // Markov cycling: high Shannon but low LZ76 (repeating blocks).
         // LLM padding requires enough repetitions for LZ76 to detect patterns.
         // 2-word cycle repeated many times — clearly repetitive.
-        let simple_cycle = "foo bar foo bar foo bar foo bar foo bar foo bar foo bar foo bar foo bar foo bar";
+        let simple_cycle =
+            "foo bar foo bar foo bar foo bar foo bar foo bar foo bar foo bar foo bar foo bar";
         let lz76_simple = super::compute_lz76_complexity(simple_cycle);
-        assert!(lz76_simple < 0.50, "Simple cycle should have low LZ76: {:.3}", lz76_simple);
+        assert!(
+            lz76_simple < 0.50,
+            "Simple cycle should have low LZ76: {:.3}",
+            lz76_simple
+        );
 
         // Longer Markov chain — realistic LLM padding with diverse words
         let markov: String = (0..20)
-            .map(|i| if i % 2 == 0 { "the system fails because" } else { "the database fails because" })
+            .map(|i| {
+                if i % 2 == 0 {
+                    "the system fails because"
+                } else {
+                    "the database fails because"
+                }
+            })
             .collect::<Vec<_>>()
             .join(" ");
         let lz76_markov = super::compute_lz76_complexity(&markov);
-        assert!(lz76_markov < 0.50, "Markov chain should have low LZ76: {:.3}", lz76_markov);
+        assert!(
+            lz76_markov < 0.50,
+            "Markov chain should have low LZ76: {:.3}",
+            lz76_markov
+        );
 
         // Verify Shannon is fooled by the Markov chain
         let shannon = super::compute_word_entropy(&markov);
-        assert!(shannon > 0.85, "Shannon should be high (fooled): {:.3}", shannon);
+        assert!(
+            shannon > 0.85,
+            "Shannon should be high (fooled): {:.3}",
+            shannon
+        );
     }
 
     #[test]
     fn test_lz76_diverse_text() {
         let diverse = "PostgreSQL B-tree index provides logarithmic lookup complexity reducing query latency for large datasets with proper vacuum scheduling";
         let lz76 = super::compute_lz76_complexity(diverse);
-        assert!(lz76 > 0.50, "Diverse text should have high LZ76: {:.3}", lz76);
+        assert!(
+            lz76 > 0.50,
+            "Diverse text should have high LZ76: {:.3}",
+            lz76
+        );
     }
 
     #[test]

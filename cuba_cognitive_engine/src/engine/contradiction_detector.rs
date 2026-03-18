@@ -20,8 +20,8 @@
 //
 // De Marneffe et al. (2008) + BART-large-MNLI (Williams et al., 2018)
 
-use serde::Serialize;
 use crate::engine::shared_utils::truncate_str;
+use serde::Serialize;
 use std::sync::{Mutex, OnceLock};
 use tracing::{debug, warn};
 
@@ -41,21 +41,30 @@ pub struct ContradictionResult {
 /// Singleton NLI model behind Mutex — loaded once, reused across all calls.
 /// Mutex is required because ZeroShotClassificationModel contains *mut C_tensor
 /// which is not Sync (cannot be shared between threads without synchronization).
-static NLI_MODEL: OnceLock<Mutex<rust_bert::pipelines::zero_shot_classification::ZeroShotClassificationModel>> = OnceLock::new();
+static NLI_MODEL: OnceLock<
+    Mutex<rust_bert::pipelines::zero_shot_classification::ZeroShotClassificationModel>,
+> = OnceLock::new();
 
-fn get_nli_model() -> Option<&'static Mutex<rust_bert::pipelines::zero_shot_classification::ZeroShotClassificationModel>> {
+fn get_nli_model() -> Option<
+    &'static Mutex<rust_bert::pipelines::zero_shot_classification::ZeroShotClassificationModel>,
+> {
     static INIT_RESULT: OnceLock<bool> = OnceLock::new();
     let success = INIT_RESULT.get_or_init(|| {
         use rust_bert::pipelines::zero_shot_classification::ZeroShotClassificationConfig;
         let config = ZeroShotClassificationConfig::default();
-        match rust_bert::pipelines::zero_shot_classification::ZeroShotClassificationModel::new(config) {
+        match rust_bert::pipelines::zero_shot_classification::ZeroShotClassificationModel::new(
+            config,
+        ) {
             Ok(model) => {
                 debug!("rust-bert ZeroShotClassification (BART-large-MNLI) loaded");
                 let _ = NLI_MODEL.set(Mutex::new(model));
                 true
             }
             Err(e) => {
-                warn!("Failed to load rust-bert NLI model, using heuristic fallback: {}", e);
+                warn!(
+                    "Failed to load rust-bert NLI model, using heuristic fallback: {}",
+                    e
+                );
                 false
             }
         }
@@ -146,12 +155,7 @@ fn detect_with_nli(
         // Construct NLI-style input: premise=current + hypothesis=previous
         let input_text = format!("{} This statement: {}", current, prev);
 
-        let output = model.predict_multilabel(
-            [input_text.as_str()],
-            candidate_labels,
-            None,
-            128,
-        );
+        let output = model.predict_multilabel([input_text.as_str()], candidate_labels, None, 128);
 
         if let Ok(predictions) = output {
             if let Some(first_result) = predictions.first() {
@@ -171,9 +175,10 @@ fn detect_with_nli(
     // Supplement with heuristic signals (they catch patterns NLI might miss)
     let heuristic_result = detect_with_heuristics(current, previous_claims);
     for h in &heuristic_result.contradictions {
-        if !contradictions.iter().any(|c| c.contains(&truncate_str(
-            h.split("vs: ").last().unwrap_or(""), 20
-        ))) {
+        if !contradictions
+            .iter()
+            .any(|c| c.contains(&truncate_str(h.split("vs: ").last().unwrap_or(""), 20)))
+        {
             contradictions.push(h.clone());
         }
     }
@@ -257,11 +262,16 @@ fn check_direct_negation(current: &str, previous: &str) -> bool {
     ];
 
     for (neg, pos) in &negation_pairs {
-        if current.contains(neg) && previous.contains(pos) && !previous.contains(neg)
-            && has_shared_context(current, previous, 2) {
-                return true;
-            }
-        if previous.contains(neg) && current.contains(pos) && !current.contains(neg)
+        if current.contains(neg)
+            && previous.contains(pos)
+            && !previous.contains(neg)
+            && has_shared_context(current, previous, 2)
+        {
+            return true;
+        }
+        if previous.contains(neg)
+            && current.contains(pos)
+            && !current.contains(neg)
             && has_shared_context(current, previous, 2)
         {
             return true;
@@ -280,9 +290,10 @@ fn check_antonym_conflict<'a>(current: &str, previous: &str) -> Option<(&'a str,
 
         if ((current_has_a && prev_has_b && !current_has_b && !prev_has_a)
             || (current_has_b && prev_has_a && !current_has_a && !prev_has_b))
-            && has_shared_context(current, previous, 1) {
-                return Some((a, b));
-            }
+            && has_shared_context(current, previous, 1)
+        {
+            return Some((a, b));
+        }
     }
     None
 }
@@ -394,7 +405,10 @@ mod tests {
             "We should increase the cache timeout for the database",
             &["We need to decrease the cache timeout for the database"],
         );
-        assert!(result.rate > 0.0, "Should detect increase/decrease conflict");
+        assert!(
+            result.rate > 0.0,
+            "Should detect increase/decrease conflict"
+        );
         assert!(!result.contradictions.is_empty());
     }
 
@@ -404,7 +418,11 @@ mod tests {
             "All tests should pass before deployment",
             &["None tests should pass before deployment"],
         );
-        assert!(result.rate > 0.0, "Should detect all/none conflict: {:?}", result);
+        assert!(
+            result.rate > 0.0,
+            "Should detect all/none conflict: {:?}",
+            result
+        );
     }
 
     #[test]
@@ -429,10 +447,7 @@ mod tests {
 
     #[test]
     fn test_result_has_nli_field() {
-        let result = detect_contradictions(
-            "test thought",
-            &["test claim"],
-        );
+        let result = detect_contradictions("test thought", &["test claim"]);
         // nli_active depends on whether model loaded — just verify field exists
         let _ = result.nli_active;
     }

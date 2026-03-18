@@ -94,17 +94,45 @@ pub fn analyze_grounding(thought: &str) -> GroundingResult {
 /// Claims are declarative statements making assertions.
 fn count_claims(lower: &str) -> usize {
     let claim_markers = [
-        "should ", "must ", "will ", "need to ", "require",
-        "is better", "is worse", "performs", "results in",
-        "causes ", "leads to", "prevents ", "ensures ",
-        "guarantees ", "eliminates ", "reduces ", "increases ",
-        "the best", "the worst", "optimal", "recommended",
-        "therefore", "consequently", "in conclusion",
+        "should ",
+        "must ",
+        "will ",
+        "need to ",
+        "require",
+        "is better",
+        "is worse",
+        "performs",
+        "results in",
+        "causes ",
+        "leads to",
+        "prevents ",
+        "ensures ",
+        "guarantees ",
+        "eliminates ",
+        "reduces ",
+        "increases ",
+        "the best",
+        "the worst",
+        "optimal",
+        "recommended",
+        "therefore",
+        "consequently",
+        "in conclusion",
         // Spanish
-        "debe ", "necesita ", "resulta en", "causa ",
-        "garantiza ", "elimina ", "reduce ", "aumenta ",
-        "el mejor", "el peor", "óptimo", "recomendado",
-        "por lo tanto", "en conclusión",
+        "debe ",
+        "necesita ",
+        "resulta en",
+        "causa ",
+        "garantiza ",
+        "elimina ",
+        "reduce ",
+        "aumenta ",
+        "el mejor",
+        "el peor",
+        "óptimo",
+        "recomendado",
+        "por lo tanto",
+        "en conclusión",
     ];
 
     claim_markers
@@ -134,26 +162,52 @@ fn count_evidence_markers(lower: &str, original: &str) -> usize {
 
     // Measurement units
     let units = [
-        "ms", "seconds", "minutes", "bytes", "kb", "mb", "gb",
-        "percent", "%", "rpm", "mm", "cm", "hz", "mhz", "ghz",
+        "ms", "seconds", "minutes", "bytes", "kb", "mb", "gb", "percent", "%", "rpm", "mm", "cm",
+        "hz", "mhz", "ghz",
     ];
     count += units.iter().filter(|u| lower.contains(**u)).count();
 
     // Reference markers
     let references = [
-        "according to", "based on", "as described",
-        "per ", "see ", "ref:", "source:", "paper:",
-        "iso ", "rfc ", "pep ", "owasp",
-        "según ", "basado en", "como describe",
+        "according to",
+        "based on",
+        "as described",
+        "per ",
+        "see ",
+        "ref:",
+        "source:",
+        "paper:",
+        "iso ",
+        "rfc ",
+        "pep ",
+        "owasp",
+        "según ",
+        "basado en",
+        "como describe",
     ];
     count += references.iter().filter(|r| lower.contains(**r)).count();
 
     // Technical specificity (concrete terms)
     let specific_terms = [
-        "function", "method", "class", "struct", "endpoint",
-        "port", "config", "parameter", "variable", "column",
-        "table", "index", "constraint", "migration",
-        "función", "método", "tabla", "columna", "migración",
+        "function",
+        "method",
+        "class",
+        "struct",
+        "endpoint",
+        "port",
+        "config",
+        "parameter",
+        "variable",
+        "column",
+        "table",
+        "index",
+        "constraint",
+        "migration",
+        "función",
+        "método",
+        "tabla",
+        "columna",
+        "migración",
     ];
     count += specific_terms
         .iter()
@@ -167,15 +221,37 @@ fn count_evidence_markers(lower: &str, original: &str) -> usize {
 /// Compute hedging ratio — proportion of uncertain language.
 fn compute_hedging_ratio(lower: &str) -> f64 {
     let hedging_markers = [
-        "maybe", "perhaps", "possibly", "probably",
-        "might", "could be", "seems like", "appears to",
-        "kind of", "sort of", "somewhat", "roughly",
-        "approximately", "around", "about ", "unclear",
-        "uncertain", "debatable", "arguable",
+        "maybe",
+        "perhaps",
+        "possibly",
+        "probably",
+        "might",
+        "could be",
+        "seems like",
+        "appears to",
+        "kind of",
+        "sort of",
+        "somewhat",
+        "roughly",
+        "approximately",
+        "around",
+        "about ",
+        "unclear",
+        "uncertain",
+        "debatable",
+        "arguable",
         // Spanish
-        "quizás", "tal vez", "posiblemente", "probablemente",
-        "podría ser", "parece que", "algo así", "más o menos",
-        "aproximadamente", "alrededor de", "incierto",
+        "quizás",
+        "tal vez",
+        "posiblemente",
+        "probablemente",
+        "podría ser",
+        "parece que",
+        "algo así",
+        "más o menos",
+        "aproximadamente",
+        "alrededor de",
+        "incierto",
     ];
 
     let word_count = lower.split_whitespace().count().max(1);
@@ -209,8 +285,8 @@ fn compute_specificity(text: &str) -> f64 {
     // Technical terms density
     let lower = text.to_lowercase();
     let technical = [
-        "api", "sql", "http", "json", "yaml", "docker",
-        "redis", "postgres", "nginx", "async", "thread",
+        "api", "sql", "http", "json", "yaml", "docker", "redis", "postgres", "nginx", "async",
+        "thread",
     ];
     let tech_count = technical.iter().filter(|t| lower.contains(**t)).count();
     score += (tech_count as f64 * 0.05).min(0.25);
@@ -247,7 +323,10 @@ mod tests {
             "Evidence-backed claims should be faithful: {:.3}",
             result.faithfulness
         );
-        assert!(result.evidence_count > 3, "Should find multiple evidence markers");
+        assert!(
+            result.evidence_count > 3,
+            "Should find multiple evidence markers"
+        );
     }
 
     #[test]

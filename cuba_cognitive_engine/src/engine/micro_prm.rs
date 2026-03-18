@@ -84,9 +84,15 @@ pub fn evaluate_prm(sandbox: &SandboxResult) -> PrmVerdict {
     // ─── E1: Compiles ────────────────────────────────────────
     let e1 = if sandbox.success { 1.0 } else { 0.0 };
     explanations.push(if sandbox.success {
-        format!("✅ E1 Compiles: Executed successfully in {}ms", sandbox.execution_ms)
+        format!(
+            "✅ E1 Compiles: Executed successfully in {}ms",
+            sandbox.execution_ms
+        )
     } else {
-        format!("❌ E1 Compiles: Error — {}", sandbox.error.as_deref().unwrap_or("unknown"))
+        format!(
+            "❌ E1 Compiles: Error — {}",
+            sandbox.error.as_deref().unwrap_or("unknown")
+        )
     });
 
     // ─── E2: Asserts Pass ────────────────────────────────────
@@ -103,7 +109,10 @@ pub fn evaluate_prm(sandbox: &SandboxResult) -> PrmVerdict {
     } else if assert_count == 0 {
         "⚠️ E2 Asserts: No verification assertions found".to_string()
     } else {
-        format!("❌ E2 Asserts: {} assertions, at least one failed", assert_count)
+        format!(
+            "❌ E2 Asserts: {} assertions, at least one failed",
+            assert_count
+        )
     });
 
     // ─── E3: Complexity OK ───────────────────────────────────
@@ -121,11 +130,21 @@ pub fn evaluate_prm(sandbox: &SandboxResult) -> PrmVerdict {
         "{} E3 Complexity: CC={} {}",
         if cc <= 10 { "✅" } else { "⚠️" },
         cc,
-        if cc <= 7 { "(optimal)" } else if cc <= 10 { "(acceptable)" } else { "(high)" }
+        if cc <= 7 {
+            "(optimal)"
+        } else if cc <= 10 {
+            "(acceptable)"
+        } else {
+            "(high)"
+        }
     ));
 
     // ─── E4: Type Safety ─────────────────────────────────────
-    let e4 = if sandbox.ast_analysis.has_type_hints { 1.0 } else { 0.3 };
+    let e4 = if sandbox.ast_analysis.has_type_hints {
+        1.0
+    } else {
+        0.3
+    };
     explanations.push(if sandbox.ast_analysis.has_type_hints {
         "✅ E4 Types: Type annotations present".to_string()
     } else {
@@ -139,7 +158,10 @@ pub fn evaluate_prm(sandbox: &SandboxResult) -> PrmVerdict {
         0.0
     };
     explanations.push(if sandbox.ast_analysis.security_violations.is_empty() {
-        format!("✅ E5 Imports: {} safe imports", sandbox.ast_analysis.import_count)
+        format!(
+            "✅ E5 Imports: {} safe imports",
+            sandbox.ast_analysis.import_count
+        )
     } else {
         format!(
             "❌ E5 Imports: {} security violations",
@@ -148,7 +170,11 @@ pub fn evaluate_prm(sandbox: &SandboxResult) -> PrmVerdict {
     });
 
     // ─── E6: Determinism ─────────────────────────────────────
-    let e6 = if sandbox.ast_analysis.is_deterministic { 1.0 } else { 0.5 };
+    let e6 = if sandbox.ast_analysis.is_deterministic {
+        1.0
+    } else {
+        0.5
+    };
     explanations.push(if sandbox.ast_analysis.is_deterministic {
         "✅ E6 Determinism: Reproducible result".to_string()
     } else {
@@ -159,11 +185,21 @@ pub fn evaluate_prm(sandbox: &SandboxResult) -> PrmVerdict {
     let func_count = sandbox.ast_analysis.function_count;
     let e7 = if func_count == 0 {
         // No functions — asserts count directly
-        if assert_count >= 2 { 1.0 } else if assert_count == 1 { 0.6 } else { 0.2 }
+        if assert_count >= 2 {
+            1.0
+        } else if assert_count == 1 {
+            0.6
+        } else {
+            0.2
+        }
     } else {
         // Functions present — check coverage ratio
         let ratio = assert_count as f64 / func_count as f64;
-        if ratio >= 1.0 { 1.0 } else { ratio.max(0.1) }
+        if ratio >= 1.0 {
+            1.0
+        } else {
+            ratio.max(0.1)
+        }
     };
     explanations.push(format!(
         "{} E7 Coverage: {} asserts / {} functions",
@@ -245,7 +281,11 @@ pub fn evaluate_static(code: &str) -> PrmVerdict {
     let e2 = if has_asserts { 0.5 } else { 0.0 };
     let e3 = if line_count < 50 { 1.0 } else { 0.5 };
     let e4 = if has_types { 0.8 } else { 0.2 };
-    let e5 = if !code.contains("subprocess") && !code.contains("os.system") { 1.0 } else { 0.0 };
+    let e5 = if !code.contains("subprocess") && !code.contains("os.system") {
+        1.0
+    } else {
+        0.0
+    };
     let e6 = if !code.contains("random") { 1.0 } else { 0.5 };
     let e7 = if has_asserts { 0.5 } else { 0.1 };
     let e8 = if has_asserts { 0.5 } else { 0.2 }; // P3-C: Can't measure without AST
@@ -273,12 +313,52 @@ pub fn evaluate_static(code: &str) -> PrmVerdict {
         verdict: "⚠️ Static analysis only (no execution)",
         explanations: vec![
             format!("🔍 E1 Compiles: Static analysis only"),
-            format!("{} E2 Asserts: {}", if has_asserts {"✅"} else {"⚠️"}, if has_asserts {"Detected"} else {"Not detected"}),
+            format!(
+                "{} E2 Asserts: {}",
+                if has_asserts { "✅" } else { "⚠️" },
+                if has_asserts {
+                    "Detected"
+                } else {
+                    "Not detected"
+                }
+            ),
             format!("✅ E3 Complexity: {} lines", line_count),
-            format!("{} E4 Types: {}", if has_types {"✅"} else {"⚠️"}, if has_types {"Annotations detected"} else {"No annotations"}),
-            format!("{} E5 Imports: {}", if has_imports {"✅"} else {"—"}, if has_imports {"Present"} else {"No imports"}),
-            format!("{} E6 Determinism: {}", if !code.contains("random") {"✅"} else {"⚠️"}, if !code.contains("random") {"Deterministic"} else {"Non-deterministic"}),
-            format!("{} E7 Coverage: {}", if has_asserts {"✅"} else {"⚠️"}, if has_asserts {"With verifications"} else {"No verifications"}),
+            format!(
+                "{} E4 Types: {}",
+                if has_types { "✅" } else { "⚠️" },
+                if has_types {
+                    "Annotations detected"
+                } else {
+                    "No annotations"
+                }
+            ),
+            format!(
+                "{} E5 Imports: {}",
+                if has_imports { "✅" } else { "—" },
+                if has_imports { "Present" } else { "No imports" }
+            ),
+            format!(
+                "{} E6 Determinism: {}",
+                if !code.contains("random") {
+                    "✅"
+                } else {
+                    "⚠️"
+                },
+                if !code.contains("random") {
+                    "Deterministic"
+                } else {
+                    "Non-deterministic"
+                }
+            ),
+            format!(
+                "{} E7 Coverage: {}",
+                if has_asserts { "✅" } else { "⚠️" },
+                if has_asserts {
+                    "With verifications"
+                } else {
+                    "No verifications"
+                }
+            ),
             format!("⚠️ E8 Diversity: Static analysis (no AST)"),
         ],
     }
@@ -312,7 +392,11 @@ mod tests {
     fn test_prm_perfect_score() {
         let result = make_success_result();
         let verdict = evaluate_prm(&result);
-        assert!(verdict.composite_score > 0.85, "Expected excellent: {:.2}", verdict.composite_score);
+        assert!(
+            verdict.composite_score > 0.85,
+            "Expected excellent: {:.2}",
+            verdict.composite_score
+        );
         assert!(verdict.verdict.contains("EXCELLENT"));
     }
 
@@ -359,7 +443,8 @@ mod tests {
 
     #[test]
     fn test_static_analysis() {
-        let verdict = evaluate_static("def foo(x: int) -> int:\n    assert x > 0\n    return x * 2");
+        let verdict =
+            evaluate_static("def foo(x: int) -> int:\n    assert x > 0\n    return x * 2");
         assert!(verdict.composite_score > 0.3);
         assert!(verdict.verdict.contains("estático") || verdict.verdict.contains("Static"));
     }
@@ -379,16 +464,18 @@ mod tests {
                 unique_assert_targets: 5,
                 function_count: 2,
                 import_count: 0,
-                has_type_hints: false,        // No type hints → E4 low
+                has_type_hints: false, // No type hints → E4 low
                 is_deterministic: true,
                 security_violations: vec![],
             },
         };
         let v1 = evaluate_prm(&result_full_veto);
         // Gate = (0.0×0.7 + 0.2×0.3) = 0.06, composite = 0.06 × groups ≈ very low
-        assert!(v1.composite_score < 0.10,
+        assert!(
+            v1.composite_score < 0.10,
             "Full veto (no compile, no types) should score < 0.10, got: {:.4}",
-            v1.composite_score);
+            v1.composite_score
+        );
 
         // Scenario 2: Code fails to compile but HAS type hints → partial veto
         let result_partial = SandboxResult {
@@ -402,7 +489,7 @@ mod tests {
                 unique_assert_targets: 5,
                 function_count: 2,
                 import_count: 0,
-                has_type_hints: true,         // Type hints → E4 high
+                has_type_hints: true, // Type hints → E4 high
                 is_deterministic: true,
                 security_violations: vec![],
             },
@@ -410,15 +497,20 @@ mod tests {
         let v2 = evaluate_prm(&result_partial);
         // Gate = (0.0×0.7 + 1.0×0.3) = 0.3, composite ≈ 0.23
         // Still well below the 0.50 "NEEDS WORK" threshold
-        assert!(v2.composite_score < 0.50,
+        assert!(
+            v2.composite_score < 0.50,
             "Partial veto (no compile, has types) should score < 0.50, got: {:.4}",
-            v2.composite_score);
+            v2.composite_score
+        );
 
         // Both should be far below a successful compilation
         let success = make_success_result();
         let v_success = evaluate_prm(&success);
-        assert!(v_success.composite_score > v2.composite_score * 2.0,
+        assert!(
+            v_success.composite_score > v2.composite_score * 2.0,
             "Successful code should score much higher than failed: success={:.4} vs failed={:.4}",
-            v_success.composite_score, v2.composite_score);
+            v_success.composite_score,
+            v2.composite_score
+        );
     }
 }

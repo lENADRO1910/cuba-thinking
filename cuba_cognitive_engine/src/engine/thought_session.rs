@@ -262,9 +262,7 @@ impl ThoughtSession {
         }
 
         // Baseline: mean of first 3 depth scores
-        let baseline: f64 = self.depth_history.iter()
-            .take(3)
-            .sum::<f64>() / 3.0;
+        let baseline: f64 = self.depth_history.iter().take(3).sum::<f64>() / 3.0;
 
         // Guard: if baseline is near-zero, no meaningful comparison
         if baseline < 0.05 {
@@ -317,7 +315,12 @@ impl ThoughtSession {
         let stopwords = crate::engine::shared_utils::stopwords();
         let new_terms: std::collections::HashSet<String> = new_thought
             .split_whitespace()
-            .map(|w| w.chars().filter(|c| c.is_alphanumeric()).collect::<String>().to_lowercase())
+            .map(|w| {
+                w.chars()
+                    .filter(|c| c.is_alphanumeric())
+                    .collect::<String>()
+                    .to_lowercase()
+            })
             .filter(|w| w.len() > 2 && !stopwords.contains(w.as_str()))
             .collect();
 
@@ -330,7 +333,12 @@ impl ThoughtSession {
         for failed_text in &self.failed_thoughts {
             let failed_terms: std::collections::HashSet<String> = failed_text
                 .split_whitespace()
-                .map(|w| w.chars().filter(|c| c.is_alphanumeric()).collect::<String>().to_lowercase())
+                .map(|w| {
+                    w.chars()
+                        .filter(|c| c.is_alphanumeric())
+                        .collect::<String>()
+                        .to_lowercase()
+                })
                 .filter(|w| w.len() > 2 && !stopwords.contains(w.as_str()))
                 .collect();
 
@@ -441,10 +449,19 @@ impl ThoughtSession {
         if self.confidence_history.len() < 4 {
             return false;
         }
-        let slice: Vec<f64> = self.confidence_history.iter()
-            .rev().take(5).copied().collect::<Vec<_>>().into_iter().rev().collect();
+        let slice: Vec<f64> = self
+            .confidence_history
+            .iter()
+            .rev()
+            .take(5)
+            .copied()
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect();
         let deltas: Vec<f64> = slice.windows(2).map(|w| w[1] - w[0]).collect();
-        let sign_changes = deltas.windows(2)
+        let sign_changes = deltas
+            .windows(2)
             .filter(|w| w[0].signum() != w[1].signum() && w[0].abs() > 0.05)
             .count();
         sign_changes >= 2
@@ -563,7 +580,11 @@ mod tests {
     fn test_hypothesis_drift_no_change() {
         let session = ThoughtSession::new("Database migration strategy", BudgetMode::Balanced);
         let drift = session.hypothesis_drift("Database migration strategy");
-        assert!(drift < 0.2, "Same hypothesis should have low drift: {:.3}", drift);
+        assert!(
+            drift < 0.2,
+            "Same hypothesis should have low drift: {:.3}",
+            drift
+        );
     }
 
     #[test]
@@ -572,10 +593,13 @@ mod tests {
             "Database migration with PostgreSQL and zero downtime",
             BudgetMode::Balanced,
         );
-        let drift = session.hypothesis_drift(
-            "Frontend animation performance optimization using WebGL"
+        let drift =
+            session.hypothesis_drift("Frontend animation performance optimization using WebGL");
+        assert!(
+            drift > 0.3,
+            "Completely different hypothesis should have high drift: {:.3}",
+            drift
         );
-        assert!(drift > 0.3, "Completely different hypothesis should have high drift: {:.3}", drift);
     }
 
     #[test]
@@ -632,8 +656,14 @@ mod tests {
     fn test_trend_improving() {
         let mut ewma = EwmaTracker::new(BudgetMode::Balanced);
         use crate::engine::ewma_reward::RewardSignals;
-        ewma.update(&RewardSignals { quality: 0.3, ..Default::default() });
-        ewma.update(&RewardSignals { quality: 0.9, ..Default::default() });
+        ewma.update(&RewardSignals {
+            quality: 0.3,
+            ..Default::default()
+        });
+        ewma.update(&RewardSignals {
+            quality: 0.9,
+            ..Default::default()
+        });
         let trend = TrendIndicator::from_ewma(&ewma);
         assert_eq!(trend, TrendIndicator::Improving);
     }
@@ -642,8 +672,14 @@ mod tests {
     fn test_trend_declining() {
         let mut ewma = EwmaTracker::new(BudgetMode::Balanced);
         use crate::engine::ewma_reward::RewardSignals;
-        ewma.update(&RewardSignals { quality: 0.9, ..Default::default() });
-        ewma.update(&RewardSignals { quality: 0.2, ..Default::default() });
+        ewma.update(&RewardSignals {
+            quality: 0.9,
+            ..Default::default()
+        });
+        ewma.update(&RewardSignals {
+            quality: 0.2,
+            ..Default::default()
+        });
         let trend = TrendIndicator::from_ewma(&ewma);
         assert_eq!(trend, TrendIndicator::Declining);
     }
@@ -659,8 +695,10 @@ mod tests {
         session.record_confidence(0.8);
         session.record_confidence(0.2);
         session.record_confidence(0.7);
-        assert!(session.is_confidence_oscillating(),
-            "Should detect oscillation in rapidly alternating confidence");
+        assert!(
+            session.is_confidence_oscillating(),
+            "Should detect oscillation in rapidly alternating confidence"
+        );
     }
 
     #[test]
@@ -671,8 +709,10 @@ mod tests {
         session.record_confidence(0.5);
         session.record_confidence(0.7);
         session.record_confidence(0.9);
-        assert!(!session.is_confidence_oscillating(),
-            "Monotonic confidence should not trigger oscillation");
+        assert!(
+            !session.is_confidence_oscillating(),
+            "Monotonic confidence should not trigger oscillation"
+        );
     }
 
     #[test]
@@ -680,8 +720,10 @@ mod tests {
         let mut session = ThoughtSession::new("hypothesis", BudgetMode::Balanced);
         session.record_confidence(0.9);
         session.record_confidence(0.2);
-        assert!(!session.is_confidence_oscillating(),
-            "Too few readings should not trigger oscillation")
+        assert!(
+            !session.is_confidence_oscillating(),
+            "Too few readings should not trigger oscillation"
+        )
     }
 
     // ─── Vector A: Root-Anchoring Tests ───────────────
@@ -691,22 +733,27 @@ mod tests {
         let mut session = ThoughtSession::new("hypothesis", BudgetMode::Balanced);
         session.record_thought("My first thought about databases");
         session.record_thought("My second thought about caching");
-        assert_eq!(session.first_thought.as_deref(), Some("My first thought about databases"));
+        assert_eq!(
+            session.first_thought.as_deref(),
+            Some("My first thought about databases")
+        );
     }
 
     #[test]
     fn test_combined_drift_uses_max() {
-        let mut session = ThoughtSession::new(
-            "Database migration zero downtime",
-            BudgetMode::Balanced,
-        );
+        let mut session =
+            ThoughtSession::new("Database migration zero downtime", BudgetMode::Balanced);
         session.record_thought("Database schema migration plan with rollback");
         // current_thought completely off-topic from first-thought
         let drift = session.combined_drift(
-            "Database migration zero downtime",  // hypothesis unchanged
-            "Frontend CSS animation performance tuning with WebGL",  // drifted
+            "Database migration zero downtime", // hypothesis unchanged
+            "Frontend CSS animation performance tuning with WebGL", // drifted
         );
-        assert!(drift > 0.3, "Combined drift should detect topic change: {:.3}", drift);
+        assert!(
+            drift > 0.3,
+            "Combined drift should detect topic change: {:.3}",
+            drift
+        );
     }
 
     // ─── V6-3: Depth Degradation Tests ────────────────
@@ -723,7 +770,11 @@ mod tests {
         let degradation = session.depth_degradation();
         assert!(degradation.is_some(), "Should detect depth degradation");
         let ratio = degradation.unwrap();
-        assert!(ratio > 0.50, "Degradation ratio should exceed 50%: {:.3}", ratio);
+        assert!(
+            ratio > 0.50,
+            "Degradation ratio should exceed 50%: {:.3}",
+            ratio
+        );
     }
 
     #[test]
@@ -734,8 +785,10 @@ mod tests {
         session.record_depth_score(0.65);
         session.record_depth_score(0.75);
         session.record_depth_score(0.68);
-        assert!(session.depth_degradation().is_none(),
-            "Stable depth should not trigger degradation");
+        assert!(
+            session.depth_degradation().is_none(),
+            "Stable depth should not trigger degradation"
+        );
     }
 
     #[test]
@@ -743,8 +796,10 @@ mod tests {
         let mut session = ThoughtSession::new("hypothesis", BudgetMode::Balanced);
         session.record_depth_score(0.80);
         session.record_depth_score(0.10); // Looks like collapse but too few samples
-        assert!(session.depth_degradation().is_none(),
-            "Need at least 4 depth scores for degradation detection");
+        assert!(
+            session.depth_degradation().is_none(),
+            "Need at least 4 depth scores for degradation detection"
+        );
     }
 
     #[test]
@@ -755,8 +810,10 @@ mod tests {
         session.record_depth_score(0.01);
         session.record_depth_score(0.03);
         session.record_depth_score(0.01);
-        assert!(session.depth_degradation().is_none(),
-            "Near-zero baseline should not trigger false positive");
+        assert!(
+            session.depth_degradation().is_none(),
+            "Near-zero baseline should not trigger false positive"
+        );
     }
 
     // ─── V7-2: Mode Collapse Detection Tests ──────────
@@ -765,37 +822,61 @@ mod tests {
     fn test_no_collapse_without_failures() {
         let session = ThoughtSession::new("hypothesis", BudgetMode::Balanced);
         // No failed thoughts registered → always orthogonal
-        assert!(session.is_mode_collapse("any new thought here").is_none(),
-            "Should not detect collapse when no failures registered");
+        assert!(
+            session.is_mode_collapse("any new thought here").is_none(),
+            "Should not detect collapse when no failures registered"
+        );
     }
 
     #[test]
     fn test_collapse_detected_exact_clone() {
         let mut session = ThoughtSession::new("hypothesis", BudgetMode::Balanced);
-        session.register_failed_thought("implement database migration with zero downtime using postgresql");
+        session.register_failed_thought(
+            "implement database migration with zero downtime using postgresql",
+        );
         // Exact same text → Jaccard = 1.0 → mode collapse
-        let result = session.is_mode_collapse("implement database migration with zero downtime using postgresql");
-        assert!(result.is_some(), "Should detect mode collapse on exact clone");
-        assert!((result.unwrap() - 1.0).abs() < 0.01, "Exact clone should have ~1.0 similarity");
+        let result = session
+            .is_mode_collapse("implement database migration with zero downtime using postgresql");
+        assert!(
+            result.is_some(),
+            "Should detect mode collapse on exact clone"
+        );
+        assert!(
+            (result.unwrap() - 1.0).abs() < 0.01,
+            "Exact clone should have ~1.0 similarity"
+        );
     }
 
     #[test]
     fn test_collapse_detected_paraphrase() {
         let mut session = ThoughtSession::new("hypothesis", BudgetMode::Balanced);
-        session.register_failed_thought("implement database migration with zero downtime using postgresql");
+        session.register_failed_thought(
+            "implement database migration with zero downtime using postgresql",
+        );
         // Paraphrase with mostly same vocabulary → mode collapse
-        let result = session.is_mode_collapse("database migration implementation for postgresql zero downtime");
-        assert!(result.is_some(), "Should detect mode collapse on paraphrase: {:?}", result);
+        let result = session
+            .is_mode_collapse("database migration implementation for postgresql zero downtime");
+        assert!(
+            result.is_some(),
+            "Should detect mode collapse on paraphrase: {:?}",
+            result
+        );
     }
 
     #[test]
     fn test_orthogonal_thought_passes() {
         let mut session = ThoughtSession::new("hypothesis", BudgetMode::Balanced);
-        session.register_failed_thought("implement database migration with zero downtime using postgresql");
+        session.register_failed_thought(
+            "implement database migration with zero downtime using postgresql",
+        );
         // Completely different topic → orthogonal
-        let result = session.is_mode_collapse("frontend css animation performance tuning with webgl shaders");
-        assert!(result.is_none(),
-            "Orthogonal thought should not trigger collapse: {:?}", result);
+        let result = session
+            .is_mode_collapse("frontend css animation performance tuning with webgl shaders");
+        assert!(
+            result.is_none(),
+            "Orthogonal thought should not trigger collapse: {:?}",
+            result
+        );
     }
 
     #[test]
@@ -806,7 +887,9 @@ mod tests {
         assert!(!session.failed_thoughts.is_empty());
         // Rollback clears failures for fresh branch
         session.rollback_to_thought(0);
-        assert!(session.failed_thoughts.is_empty(),
-            "Rollback should clear failed thoughts for fresh exploration");
+        assert!(
+            session.failed_thoughts.is_empty(),
+            "Rollback should clear failed thoughts for fresh exploration"
+        );
     }
 }

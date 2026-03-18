@@ -18,10 +18,10 @@
 // Latency: ~2ms cached, ~200ms first call (model load)
 // Memory: ~83MB (33MB model + 50MB ONNX Runtime)
 
-use std::collections::HashMap;
-use std::sync::{Mutex, OnceLock};
 use lru::LruCache;
+use std::collections::HashMap;
 use std::num::NonZeroUsize;
+use std::sync::{Mutex, OnceLock};
 use tracing::{debug, warn};
 
 /// LRU cache for text embeddings — avoids re-computing dense vectors.
@@ -29,9 +29,8 @@ use tracing::{debug, warn};
 static EMBEDDING_CACHE: OnceLock<Mutex<LruCache<String, Vec<f32>>>> = OnceLock::new();
 
 fn get_cache() -> &'static Mutex<LruCache<String, Vec<f32>>> {
-    EMBEDDING_CACHE.get_or_init(|| {
-        Mutex::new(LruCache::new(NonZeroUsize::new(256).expect("256 > 0")))
-    })
+    EMBEDDING_CACHE
+        .get_or_init(|| Mutex::new(LruCache::new(NonZeroUsize::new(256).expect("256 > 0"))))
 }
 
 /// Singleton fastembed TextEmbedding model behind Mutex.
@@ -53,7 +52,10 @@ fn get_embedding_model() -> Option<&'static Mutex<fastembed::TextEmbedding>> {
                 true
             }
             Err(e) => {
-                warn!("Failed to load fastembed model, falling back to TF-IDF: {}", e);
+                warn!(
+                    "Failed to load fastembed model, falling back to TF-IDF: {}",
+                    e
+                );
                 false
             }
         }
@@ -286,16 +288,22 @@ mod tests {
             "The server crashed due to memory overflow",
             "Out of memory error caused the application to fail",
         );
-        assert!(sim > 0.1, "Semantically similar texts should have similarity > 0.1: {:.3}", sim);
+        assert!(
+            sim > 0.1,
+            "Semantically similar texts should have similarity > 0.1: {:.3}",
+            sim
+        );
     }
 
     #[test]
     fn test_tfidf_fallback_works() {
         // Direct fallback test
-        let coherence = tfidf_coherence(
-            "database migration strategy",
-            "database migration planning",
+        let coherence =
+            tfidf_coherence("database migration strategy", "database migration planning");
+        assert!(
+            coherence > 0.3,
+            "TF-IDF fallback should work: {:.3}",
+            coherence
         );
-        assert!(coherence > 0.3, "TF-IDF fallback should work: {:.3}", coherence);
     }
 }

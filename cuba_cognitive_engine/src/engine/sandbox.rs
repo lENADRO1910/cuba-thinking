@@ -23,10 +23,10 @@
 // - assert statements (primary verification mechanism)
 
 use anyhow::Result;
-use pyo3::prelude::*;
 use pyo3::ffi::c_str;
-use std::ffi::CString;
+use pyo3::prelude::*;
 use serde::{Deserialize, Serialize};
+use std::ffi::CString;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Semaphore;
@@ -245,8 +245,7 @@ pub fn extract_python_block(text: &str) -> Option<String> {
     // Bare code detection (starts with common Python patterns)
     let trimmed = text.trim();
     let code_starters = [
-        "import ", "from ", "def ", "class ", "assert ",
-        "x =", "result =", "for ", "if ", "while ",
+        "import ", "from ", "def ", "class ", "assert ", "x =", "result =", "for ", "if ", "while ",
     ];
     if code_starters.iter().any(|s| trimmed.starts_with(s)) {
         return Some(trimmed.to_string());
@@ -298,7 +297,8 @@ fn execute_in_sandbox(code: &str) -> SandboxResult {
             stdout: String::new(),
             error: Some(format!(
                 "SECURITY: Code size {} bytes exceeds limit {} bytes",
-                code.len(), MAX_CODE_BYTES
+                code.len(),
+                MAX_CODE_BYTES
             )),
             execution_ms: start.elapsed().as_millis() as u64,
             ast_analysis: AstAnalysis::empty(),
@@ -535,21 +535,29 @@ _cuba_tracer_active = True
         // P0-4: Clear settrace to prevent thread pool poisoning.
         // Tokio reuses OS threads — leaving a tracer active causes
         // the next task on this thread to inherit line-by-line tracing.
-        let _ = py.run(c_str!("
+        let _ = py.run(
+            c_str!(
+                "
 if globals().get('_cuba_tracer_active'):
     sys.settrace(None)
     _cuba_tracer_active = False
-"), Some(&globals), None);
+"
+            ),
+            Some(&globals),
+            None,
+        );
 
         // FIX-1: Restore original RLIMIT_DATA to prevent leaking to subsequent calls
         let _ = py.run(
-            c_str!("
+            c_str!(
+                "
 if _orig_rlimit_data is not None:
     try:
         _sandbox_resource.setrlimit(_sandbox_resource.RLIMIT_DATA, _orig_rlimit_data)
     except (NameError, ValueError, OSError):
         pass
-"),
+"
+            ),
             Some(&globals),
             None,
         );
@@ -868,17 +876,26 @@ mod tests {
     #[test]
     fn test_extract_python_block() {
         let input = "Some text\n```python\nassert 1 + 1 == 2\n```\nMore text";
-        assert_eq!(extract_python_block(input), Some("assert 1 + 1 == 2".to_string()));
+        assert_eq!(
+            extract_python_block(input),
+            Some("assert 1 + 1 == 2".to_string())
+        );
     }
 
     #[test]
     fn test_extract_bare_code() {
-        assert_eq!(extract_python_block("assert x > 5"), Some("assert x > 5".to_string()));
+        assert_eq!(
+            extract_python_block("assert x > 5"),
+            Some("assert x > 5".to_string())
+        );
     }
 
     #[test]
     fn test_extract_no_code() {
-        assert_eq!(extract_python_block("Just natural language, no code."), None);
+        assert_eq!(
+            extract_python_block("Just natural language, no code."),
+            None
+        );
     }
 
     #[test]
@@ -927,7 +944,10 @@ mod tests {
     fn test_ast_security_scan_blocks_import() {
         Python::attach(|py| {
             let violations = ast_security_scan(py, "import subprocess\nsubprocess.run(['ls'])");
-            assert!(!violations.is_empty(), "Expected violation for subprocess import");
+            assert!(
+                !violations.is_empty(),
+                "Expected violation for subprocess import"
+            );
         });
     }
 
@@ -939,7 +959,11 @@ mod tests {
         Python::attach(|py| {
             let code = "# This uses subprocess internally\nx = 40 + 2\nassert x == 42";
             let violations = ast_security_scan(py, code);
-            assert!(violations.is_empty(), "Comment should not trigger: {:?}", violations);
+            assert!(
+                violations.is_empty(),
+                "Comment should not trigger: {:?}",
+                violations
+            );
         });
     }
 
@@ -957,7 +981,17 @@ mod tests {
         let code = "def f(n): return f(n+1)\nf(0)";
         let result = execute_in_sandbox(code);
         assert!(!result.success, "Deep recursion should fail");
-        assert!(result.error.as_deref().unwrap_or("").contains("RecursionError")
-            || result.error.as_deref().unwrap_or("").contains("maximum recursion"));
+        assert!(
+            result
+                .error
+                .as_deref()
+                .unwrap_or("")
+                .contains("RecursionError")
+                || result
+                    .error
+                    .as_deref()
+                    .unwrap_or("")
+                    .contains("maximum recursion")
+        );
     }
 }
