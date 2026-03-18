@@ -1,0 +1,41 @@
+{
+  "name": "cuba-thinking",
+  "version": "1.2.0",
+  "description": "Advanced sequential thinking MCP with semantic embeddings, anti-hallucination, and cognitive stage engine",
+  "license": "CC-BY-NC-4.0",
+  "author": "Cuba MCP Team",
+  "type": "module",
+  "bin": {
+    "cuba-thinking": "./dist/index.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx src/index.ts",
+    "start": "node dist/index.js",
+    "test": "NODE_OPTIONS=--experimental-vm-modules jest --forceExit",
+    "test:watch": "jest --watch",
+    "test:coverage": "NODE_OPTIONS=--experimental-vm-modules jest --coverage --forceExit",
+    "typecheck": "tsc --noEmit",
+    "check:all": "npm run typecheck && npm run test",
+    "prepare": "npm run build"
+  },
+  "dependencies": {
+    "@huggingface/transformers": "^3.4.1",
+    "@modelcontextprotocol/sdk": "^1.15.1",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/jest": "^30.0.0",
+    "@types/node": "^20.0.0",
+    "jest": "^29.7.0",
+    "ts-jest": "^29.4.6",
+    "tsx": "^4.0.0",
+    "typescript": "^5.2.0"
+  },
+  "engines": {
+    "node": ">=24.0.0"
+  }
+}
