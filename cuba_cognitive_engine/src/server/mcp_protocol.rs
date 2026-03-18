@@ -6,8 +6,6 @@ use std::sync::Arc;
 use tokio::io::{self, AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::time::Instant;
 
-use super::observability::RedMetrics;
-
 use crate::engine::sandbox::LocalReasoningEngine;
 
 /// JSON-RPC 2.0 Request ID
@@ -120,8 +118,6 @@ pub struct McpServer {
     sandbox: Arc<LocalReasoningEngine>,
     /// Phase 5A: Persistent thought sessions across calls.
     sessions: Arc<crate::engine::thought_session::SessionStore>,
-    /// P2: RED metrics (Rate, Errors, Duration) per tool.
-    metrics: Arc<RedMetrics>,
 }
 
 impl McpServer {
@@ -129,8 +125,7 @@ impl McpServer {
         // DEBT-T07: Direct sandbox, no router indirection
         let sandbox = Arc::new(LocalReasoningEngine::new("cognitive-engine-v3", 2).unwrap());
         let sessions = Arc::new(crate::engine::thought_session::SessionStore::new());
-        let metrics = Arc::new(RedMetrics::new());
-        Self { sandbox, sessions, metrics }
+        Self { sandbox, sessions }
     }
 
     /// Primary Execution Loop (STDIO)
@@ -159,9 +154,7 @@ impl McpServer {
                 line.clear();
                 let bytes_read = stdin.read_line(&mut line).await.unwrap_or(0);
                 if bytes_read == 0 {
-                    // EOF — emit RED metrics summary before shutdown
-                    self.metrics.emit_summary();
-                    break;
+                    break; // EOF Reached
                 }
 
                 let req_str = line.clone();
@@ -171,7 +164,8 @@ impl McpServer {
                 // Spawn every request in the local task set so the stdin listener isn't blocked!
                 // Essential for Phase 10 Mid-Turn Steering as the task future is !Send due to Bumpalo.
                 tokio::task::spawn_local(async move {
-                    match serde_json::from_str::<RpcRequest>(&req_str) {
+                    let mut req_bytes = req_str.into_bytes();
+                    match simd_json::from_slice::<RpcRequest>(&mut req_bytes) {
                         Ok(req) => {
                             let result = self_clone.handle_request(&req, tx_clone.clone()).await;
 
@@ -193,7 +187,7 @@ impl McpServer {
                             }
                         }
                         Err(e) => {
-                            tracing::error!("Failed to parse JSON-RPC: {} | Error: {}", req_str, e);
+                            tracing::error!("Failed to parse JSON-RPC with simd-json: Error: {}", e);
                             let err_msg = OutgoingMessage::Error(RpcErrorResponse {
                                 jsonrpc: "2.0".to_string(),
                                 id: RequestId::Null,
@@ -351,10 +345,7 @@ impl McpServer {
 
     async fn handle_tool_call(&self, params: &ToolsCallParams, tx: tokio::sync::mpsc::Sender<OutgoingMessage>) -> Result<Option<Value>, RpcError> {
         let tool_name = params.name.as_str();
-        let call_start = std::time::Instant::now();
-        let _span = tracing::info_span!("tool_call", tool = tool_name).entered();
-
-        let result = match tool_name {
+        match tool_name {
             "cuba_thinking" => self.handle_cuba_thinking_tool(params, tx).await,
             "run_stress_benchmark" => self.handle_stress_benchmark_tool(params, tx).await,
             "verify_code" => self.handle_verify_code_tool(params).await,
@@ -364,20 +355,7 @@ impl McpServer {
                 message: format!("Unknown tool: {}", tool_name),
                 data: None,
             })
-        };
-
-        let duration = call_start.elapsed();
-        let is_error = result.is_err();
-        self.metrics.record_call(tool_name, duration, is_error);
-
-        tracing::debug!(
-            tool = tool_name,
-            duration_ms = format!("{:.2}", duration.as_secs_f64() * 1000.0),
-            success = !is_error,
-            "tool call completed"
-        );
-
-        result
+        }
     }
 
     /// F5: Shared progress notification emitter.
@@ -672,27 +650,6 @@ impl McpServer {
                     (2) Build from there, discarding speculative branches."
                     .to_string(),
             });
-        }
-
-        // ─── N3: Reward Consistency Check (PRM↔EWMA divergence) ──
-        // Statistical basis: If PRM and EWMA estimate the same μ with
-        // σ ≈ 0.15 each, |PRM - EWMA| ~ HalfNormal(σ√2 ≈ 0.21).
-        // Threshold 0.4 → Z ≈ 1.9 → P(false alarm) ≈ 2.9%.
-        if is_sandbox {
-            let ewma_pct = ewma.percentage() / 100.0;
-            let divergence = (prm_score - ewma_pct).abs();
-            if divergence > 0.4 {
-                directives.push(corrective_directives::Directive {
-                    severity: corrective_directives::Severity::Warning,
-                    dimension: "Consistency",
-                    instruction: format!(
-                        "🔀 REWARD DIVERGENCE: PRM ({:.0}%) and EWMA ({:.0}%) diverge by {:.0}pp \
-                         (threshold: 40pp, Z≈1.9). This may indicate reward gaming — \
-                         high code scores without proportional reasoning quality, or vice versa.",
-                        prm_score * 100.0, ewma_pct * 100.0, divergence * 100.0
-                    ),
-                });
-            }
         }
 
         // ─── R9: Graph-of-Thought (from persistent session) ──────

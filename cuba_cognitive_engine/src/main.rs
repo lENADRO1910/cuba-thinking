@@ -7,9 +7,8 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     // 1. Initialize Strict Structured Logging (SRE Pillar)
-    // V8: JSON format on stderr for automated fault detection by MCP clients.
     tracing_subscriber::fmt()
-        .json()
+        //.with_env_filter(EnvFilter::from_default_env()) // (Needs appropriate dependency setup)
         .with_writer(std::io::stderr) // STDERR is crucial so STDOUT is reserved for MCP JSON
         .init();
 
