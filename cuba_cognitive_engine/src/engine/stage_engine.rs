@@ -60,25 +60,21 @@ impl CognitiveStage {
 
     /// Quality dimension boost weights for this stage.
     /// Returns [clarity, depth, breadth, logic, relevance, actionability].
-    ///
-    /// V9: Reduced from 3.0x to 2.0x per Deep Research (2025).
-    /// 3.0x caused gradient instability in multi-objective reward
-    /// (one dimension dominates, others become noise).
-    /// 2.0x provides clear stage prevalence without domination.
+    /// One dimension gets 3x boost per stage focus.
     pub fn quality_boosts(self) -> [f64; 6] {
         match self {
-            // DEFINE boosts Clarity (2x)
-            CognitiveStage::Define => [2.0, 1.0, 1.0, 1.0, 1.0, 1.0],
-            // RESEARCH boosts Breadth (2x)
-            CognitiveStage::Research => [1.0, 1.0, 2.0, 1.0, 1.0, 1.0],
-            // ANALYZE boosts Depth (2x)
-            CognitiveStage::Analyze => [1.0, 2.0, 1.0, 1.0, 1.0, 1.0],
-            // HYPOTHESIZE boosts Logic (2x)
-            CognitiveStage::Hypothesize => [1.0, 1.0, 1.0, 2.0, 1.0, 1.0],
-            // VERIFY boosts Relevance (2x)
-            CognitiveStage::Verify => [1.0, 1.0, 1.0, 1.0, 2.0, 1.0],
-            // SYNTHESIZE boosts Actionability (2x)
-            CognitiveStage::Synthesize => [1.0, 1.0, 1.0, 1.0, 1.0, 2.0],
+            // DEFINE boosts Clarity (3x)
+            CognitiveStage::Define => [3.0, 1.0, 1.0, 1.0, 1.0, 1.0],
+            // RESEARCH boosts Breadth (3x)
+            CognitiveStage::Research => [1.0, 1.0, 3.0, 1.0, 1.0, 1.0],
+            // ANALYZE boosts Depth (3x)
+            CognitiveStage::Analyze => [1.0, 3.0, 1.0, 1.0, 1.0, 1.0],
+            // HYPOTHESIZE boosts Logic (3x)
+            CognitiveStage::Hypothesize => [1.0, 1.0, 1.0, 3.0, 1.0, 1.0],
+            // VERIFY boosts Relevance (3x)
+            CognitiveStage::Verify => [1.0, 1.0, 1.0, 1.0, 3.0, 1.0],
+            // SYNTHESIZE boosts Actionability (3x)
+            CognitiveStage::Synthesize => [1.0, 1.0, 1.0, 1.0, 1.0, 3.0],
         }
     }
 
@@ -122,25 +118,8 @@ impl CognitiveStage {
     }
 }
 
-/// P2-4: Stage detection from explicit metadata.
-/// Prioritizes user-specified stage over content heuristics.
-/// Returns None if the metadata stage string is invalid or missing.
-#[allow(dead_code)]
-pub fn detect_stage_from_metadata(stage_str: &str) -> Option<CognitiveStage> {
-    match stage_str.to_uppercase().as_str() {
-        "DEFINE" => Some(CognitiveStage::Define),
-        "RESEARCH" => Some(CognitiveStage::Research),
-        "ANALYZE" => Some(CognitiveStage::Analyze),
-        "HYPOTHESIZE" => Some(CognitiveStage::Hypothesize),
-        "VERIFY" => Some(CognitiveStage::Verify),
-        "SYNTHESIZE" => Some(CognitiveStage::Synthesize),
-        _ => None,
-    }
-}
-
 /// Auto-detection of cognitive stage from thought content.
 /// Uses keyword heuristics when the user doesn't specify a stage.
-/// Prefer `detect_stage_from_metadata()` when explicit stage is available.
 pub fn detect_stage(thought: &str) -> CognitiveStage {
     let lower = thought.to_lowercase();
 

@@ -1,7 +1,7 @@
 # Node.js legacy
 node_modules/
 dist/
-src/__tests__/
+
 jest.config.mjs
 *.tsbuildinfo
 coverage/
@@ -13,4 +13,3 @@ cuba_cognitive_engine/target/
 .cargo/
 *.swp
 *.swo
-cuba_cognitive_engine/.fastembed_cache/
