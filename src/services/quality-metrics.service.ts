@@ -575,7 +575,6 @@ export class QualityMetricsService {
     );
   }
 
-  // TD3: generateSessionStats() removed — dead code, never called
 }
 
 function shannonEntropy(scores: number[]): number {
