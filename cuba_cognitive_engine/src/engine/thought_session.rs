@@ -465,6 +465,9 @@ impl ThoughtSession {
 /// **IMPORTANT**: If a concurrent transport (REST/WebSocket) is added,
 /// this MUST be migrated to `tokio::sync::Mutex` or `DashMap` to prevent
 /// blocking the tokio worker thread pool under contention.
+///
+/// Maximum number of active cognitive sessions to prevent OOM / DoS.
+const MAX_ACTIVE_SESSIONS: usize = 1000;
 pub struct SessionStore {
     sessions: Mutex<HashMap<u64, ThoughtSession>>,
 }
@@ -490,6 +493,17 @@ impl SessionStore {
 
         // Cleanup expired sessions (opportunistic)
         sessions.retain(|_, session| !session.is_expired());
+
+        // Enforce capacity limit to prevent unbounded memory growth (DoS protection)
+        if !sessions.contains_key(&hash) && sessions.len() >= MAX_ACTIVE_SESSIONS {
+            // Find and remove the oldest session
+            if let Some(oldest_key) = sessions.iter()
+                .min_by_key(|(_, session)| session.last_accessed)
+                .map(|(k, _)| *k)
+            {
+                sessions.remove(&oldest_key);
+            }
+        }
 
         // Get or create
         let session = sessions
@@ -808,5 +822,17 @@ mod tests {
         session.rollback_to_thought(0);
         assert!(session.failed_thoughts.is_empty(),
             "Rollback should clear failed thoughts for fresh exploration");
+    }
+
+    #[test]
+    fn test_session_store_capacity_limit() {
+        let store = SessionStore::new();
+        // Create 1000 + 5 sessions (MAX_ACTIVE_SESSIONS = 1000)
+        for i in 0..1005 {
+            store.with_session(&format!("Hypothesis {}", i), BudgetMode::Balanced, |session| {
+                session.record_thought(&format!("Thought {}", i));
+            });
+        }
+        assert_eq!(store.active_count(), 1000);
     }
 }
