@@ -23,8 +23,8 @@ use serde::Serialize;
 use std::collections::hash_map::DefaultHasher;
 use std::collections::{HashMap, VecDeque};
 use std::hash::{Hash, Hasher};
-use std::sync::Mutex;
 use std::time::Instant;
+use dashmap::DashMap;
 
 /// Session TTL: 10 minutes.
 const TTL_SECONDS: u64 = 600;
@@ -157,14 +157,6 @@ impl ThoughtSession {
 
         // V5-1: Snapshot BEFORE mutation — allows rollback if MCTS rejects this thought
         self.thought_snapshots.insert(idx, self.thoughts.len());
-
-        // F4: Prune stale snapshots — retain only entries for thoughts still in
-        // the ring buffer window, preventing unbounded HashMap growth.
-        // At most MAX_THOUGHTS snapshots survive (one per ring buffer slot).
-        if self.thought_snapshots.len() > MAX_THOUGHTS * 2 {
-            let min_thought = idx.saturating_sub(MAX_THOUGHTS);
-            self.thought_snapshots.retain(|&k, _| k >= min_thought);
-        }
 
         // Ring buffer: evict oldest if at capacity
         if self.thoughts.len() >= MAX_THOUGHTS {
@@ -452,64 +444,55 @@ impl ThoughtSession {
 }
 
 /// Thread-safe session store with TTL-based cleanup.
-///
-/// # Concurrency Note (F3)
-///
-/// Uses `std::sync::Mutex` (not `tokio::sync::Mutex`) because:
-/// 1. All closures passed to `with_session` are sync and O(μs) —
-///    no I/O, no awaits, just in-memory data manipulation.
-/// 2. Current transport is STDIO (single client, zero contention).
-/// 3. `tokio::sync::Mutex` would require `async FnOnce` closures
-///    (not yet stable in Rust) or a complete API redesign.
-///
-/// **IMPORTANT**: If a concurrent transport (REST/WebSocket) is added,
-/// this MUST be migrated to `tokio::sync::Mutex` or `DashMap` to prevent
-/// blocking the tokio worker thread pool under contention.
 pub struct SessionStore {
-    sessions: Mutex<HashMap<u64, ThoughtSession>>,
+    sessions: DashMap<u64, ThoughtSession>,
 }
 
 impl SessionStore {
     pub fn new() -> Self {
         Self {
-            sessions: Mutex::new(HashMap::new()),
+            sessions: DashMap::new(),
         }
     }
 
     /// Get or create a session for the given hypothesis.
-    /// Returns a closure-based access pattern to avoid holding the lock.
+    /// Uses DashMap for fine-grained locking and scaling.
     pub fn with_session<F, R>(&self, hypothesis: &str, budget: BudgetMode, f: F) -> R
     where
         F: FnOnce(&mut ThoughtSession) -> R,
     {
         let hash = compute_hypothesis_hash(hypothesis);
-        let mut sessions = self.sessions.lock().unwrap_or_else(|e| {
-            tracing::warn!("SessionStore mutex was poisoned in with_session(), recovering");
-            e.into_inner()
+
+        // Opportunistic global cleanup of expired sessions to prevent memory leaks
+        // over time from forgotten hypotheses. DashMap's retain is safe for concurrent access.
+        self.sessions.retain(|_, session| !session.is_expired());
+
+        // Using DashMap's entry API ensures atomic get-or-create,
+        // preventing race conditions where two threads might insert simultaneously.
+        let mut session_ref = self.sessions.entry(hash).or_insert_with(|| {
+            ThoughtSession::new(hypothesis, budget)
         });
 
-        // Cleanup expired sessions (opportunistic)
-        sessions.retain(|_, session| !session.is_expired());
+        // Reset the session if it's expired
+        if session_ref.is_expired() {
+            *session_ref = ThoughtSession::new(hypothesis, budget);
+        }
 
-        // Get or create
-        let session = sessions
-            .entry(hash)
-            .or_insert_with(|| ThoughtSession::new(hypothesis, budget));
-
-        // Touch last accessed
-        session.last_accessed = Instant::now();
-
-        f(session)
+        session_ref.last_accessed = Instant::now();
+        f(&mut *session_ref)
     }
 
     /// Number of active sessions.
     #[allow(dead_code)]
     pub fn active_count(&self) -> usize {
-        let sessions = self.sessions.lock().unwrap_or_else(|e| {
-            tracing::warn!("SessionStore mutex was poisoned in active_count(), recovering");
-            e.into_inner()
-        });
-        sessions.values().filter(|s| !s.is_expired()).count()
+        // DashMap count is approximate but fast, we filter expired inline
+        let mut count = 0;
+        for item in self.sessions.iter() {
+            if !item.value().is_expired() {
+                count += 1;
+            }
+        }
+        count
     }
 }
 
@@ -575,7 +558,7 @@ mod tests {
         let drift = session.hypothesis_drift(
             "Frontend animation performance optimization using WebGL"
         );
-        assert!(drift > 0.3, "Completely different hypothesis should have high drift: {:.3}", drift);
+        assert!(drift > 0.5, "Completely different hypothesis should have high drift: {:.3}", drift);
     }
 
     #[test]
