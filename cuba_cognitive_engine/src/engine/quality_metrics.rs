@@ -57,15 +57,50 @@ impl QualityScores {
 /// Compute all 6 quality dimensions for a thought.
 /// When `is_code` is true, scoring adapts for programming constructs
 /// instead of natural language markers (F16).
+pub struct ParsedThought<'a> {
+    pub text: &'a str,
+    pub lower: String,
+
+    pub clean_words: Vec<&'a str>,
+    pub sentences: Vec<&'a str>,
+    pub alphanumeric_words_lower: Vec<String>,
+}
+
 pub fn compute_quality(thought: &str, context_keywords: &[&str]) -> QualityScores {
     let is_code = crate::engine::shared_utils::is_code_input(thought);
+
+    let lower = thought.to_lowercase();
+    let words: Vec<&str> = thought.split_whitespace().collect();
+    let clean_words: Vec<&str> = words
+        .iter()
+        .map(|w| w.trim_matches(|c: char| !c.is_alphanumeric()))
+        .filter(|w| !w.is_empty())
+        .collect();
+    let alphanumeric_words_lower: Vec<String> = words
+        .iter()
+        .map(|w| w.trim_matches(|c: char| !c.is_alphanumeric()).to_lowercase())
+        .filter(|w| !w.is_empty())
+        .collect();
+    let sentences: Vec<&str> = thought
+        .split(['.', '!', '?', '\n'])
+        .filter(|s| !s.trim().is_empty())
+        .collect();
+
+    let parsed = ParsedThought {
+        text: thought,
+        lower,
+        clean_words,
+        sentences,
+        alphanumeric_words_lower,
+    };
+
     QualityScores {
-        clarity: compute_clarity(thought),
-        depth: compute_depth(thought, is_code),
-        breadth: compute_breadth(thought),
-        logic: compute_logic(thought),
-        relevance: compute_relevance(thought, context_keywords),
-        actionability: compute_actionability(thought, is_code),
+        clarity: compute_clarity(&parsed),
+        depth: compute_depth(&parsed, is_code),
+        breadth: compute_breadth(&parsed),
+        logic: compute_logic(&parsed),
+        relevance: compute_relevance(&parsed, context_keywords),
+        actionability: compute_actionability(&parsed, is_code),
     }
 }
 
@@ -204,29 +239,20 @@ pub fn apply_length_penalty(quality: QualityScores, thought: &str, budget: crate
 // Flesch-Kincaid: readability based on sentence length and syllable count
 // Templin (1957), Kincaid et al. (1975)
 
-fn compute_clarity(text: &str) -> f64 {
-    let words: Vec<&str> = text
-        .split_whitespace()
-        .map(|w| w.trim_matches(|c: char| !c.is_alphanumeric()))
-        .filter(|w| !w.is_empty())
-        .collect();
-
-    if words.is_empty() {
+fn compute_clarity(parsed: &ParsedThought<'_>) -> f64 {
+    if parsed.clean_words.is_empty() {
         return 0.0;
     }
 
-    let unique: HashSet<&str> = words.iter().copied().collect();
+    let unique: std::collections::HashSet<&str> = parsed.clean_words.iter().copied().collect();
     // V9: Root-TTR normalization — TTR = unique / √total.
-    let ttr = unique.len() as f64 / (words.len() as f64).sqrt();
+    let ttr = unique.len() as f64 / (parsed.clean_words.len() as f64).sqrt();
 
     // Sentence diversity
-    let sentences: Vec<&str> = text
-        .split(['.', '!', '?', '\n'])
-        .filter(|s| !s.trim().is_empty())
-        .collect();
+    let sentences = &parsed.sentences;
 
     let sentence_diversity = if sentences.len() > 1 {
-        let unique_starts: HashSet<&str> = sentences
+        let unique_starts: std::collections::HashSet<&str> = sentences
             .iter()
             .filter_map(|s| s.split_whitespace().next())
             .collect();
@@ -238,10 +264,10 @@ fn compute_clarity(text: &str) -> f64 {
     // Flesch-Kincaid Reading Ease (Kincaid et al., 1975)
     // FK = 206.835 - 1.015 × (words/sentences) - 84.6 × (syllables/words)
     // Score: 100 = very easy, 0 = very hard. Normalized to [0, 1].
-    let fk_score = compute_flesch_kincaid(&words, &sentences);
+    let fk_score = compute_flesch_kincaid(&parsed.clean_words, sentences);
 
     // Weighted: 40% TTR + 15% sentence diversity + 30% Flesch-Kincaid + 15% length consistency
-    let length_consistency = compute_sentence_length_consistency(&sentences);
+    let length_consistency = compute_sentence_length_consistency(sentences);
     (0.4 * ttr + 0.15 * sentence_diversity + 0.3 * fk_score + 0.15 * length_consistency).min(1.0)
 }
 
@@ -318,12 +344,12 @@ fn compute_sentence_length_consistency(sentences: &[&str]) -> f64 {
 // Counts subordinate clauses and causal reasoning markers.
 // Hunt (1965), "Grammatical Structures Written at Three Grade Levels"
 
-fn compute_depth(text: &str, is_code: bool) -> f64 {
+fn compute_depth(parsed: &ParsedThought<'_>, is_code: bool) -> f64 {
     if is_code {
-        return compute_code_depth(text);
+        return compute_code_depth(parsed.text);
     }
 
-    let lower = text.to_lowercase();
+    let lower = &parsed.lower;
 
     // Subordinate clause markers
     let clause_markers = [
@@ -348,7 +374,7 @@ fn compute_depth(text: &str, is_code: bool) -> f64 {
         .filter(|m| lower.contains(**m))
         .count();
 
-    let sentences = text
+    let sentences = parsed.text
         .split(['.', '!', '?'])
         .filter(|s| !s.trim().is_empty())
         .count()
@@ -413,26 +439,22 @@ fn compute_code_depth(text: &str) -> f64 {
 // Measures topic diversity through unique noun-like words.
 // Higher ratio = broader exploration of concepts.
 
-fn compute_breadth(text: &str) -> f64 {
-    let words: Vec<String> = text
-        .split_whitespace()
-        .map(|w| {
-            w.trim_matches(|c: char| !c.is_alphanumeric())
-                .to_lowercase()
-        })
+fn compute_breadth(parsed: &ParsedThought<'_>) -> f64 {
+    let filtered_words: Vec<&str> = parsed.alphanumeric_words_lower
+        .iter()
+        .map(|w| w.as_str())
         .filter(|w| w.len() > 3) // Skip short words (articles, prepositions)
         .collect();
 
-    if words.is_empty() {
+    if filtered_words.is_empty() {
         return 0.0;
     }
 
     // Filter out common stopwords to focus on content words
     let stopwords = crate::engine::shared_utils::stopwords();
 
-    let content_words: Vec<&str> = words
-        .iter()
-        .map(|w| w.as_str())
+    let content_words: Vec<&str> = filtered_words
+        .into_iter()
         .filter(|w| !stopwords.contains(w))
         .collect();
 
@@ -440,7 +462,7 @@ fn compute_breadth(text: &str) -> f64 {
         return 0.0;
     }
 
-    let unique: HashSet<&&str> = content_words.iter().collect();
+    let unique: std::collections::HashSet<&&str> = content_words.iter().collect();
     let breadth_ratio = unique.len() as f64 / content_words.len() as f64;
 
     // Also check for domain markers (technical terms hint at breadth)
@@ -452,8 +474,9 @@ fn compute_breadth(text: &str) -> f64 {
     ];
     let domain_count = domain_markers
         .iter()
-        .filter(|m| text.to_lowercase().contains(**m))
+        .filter(|m| parsed.lower.contains(**m))
         .count();
+
     let domain_bonus = (domain_count as f64 * 0.05).min(0.2);
 
     (breadth_ratio + domain_bonus).min(1.0)
@@ -463,8 +486,8 @@ fn compute_breadth(text: &str) -> f64 {
 // Measures logical structure through connective types and conditional chains.
 // ROSCOE (Golovneva et al., 2023, ICLR)
 
-fn compute_logic(text: &str) -> f64 {
-    let lower = text.to_lowercase();
+fn compute_logic(parsed: &ParsedThought<'_>) -> f64 {
+    let lower = &parsed.lower;
 
     // Different types of logical connectives
     let additive = ["and", "also", "furthermore", "moreover", "additionally", "además", "también"];
@@ -504,15 +527,14 @@ fn compute_logic(text: &str) -> f64 {
 // Cosine-like similarity between thought keywords and context.
 // Salton (1975), "Vector Space Model"
 
-fn compute_relevance(text: &str, context_keywords: &[&str]) -> f64 {
+fn compute_relevance(parsed: &ParsedThought<'_>, context_keywords: &[&str]) -> f64 {
     if context_keywords.is_empty() {
         return 0.5; // Neutral when no context provided
     }
 
-    let text_lower = text.to_lowercase();
-    let text_words: HashSet<String> = text_lower
-        .split_whitespace()
-        .map(|w| w.trim_matches(|c: char| !c.is_alphanumeric()).to_string())
+    let text_lower = &parsed.lower;
+    let text_words: std::collections::HashSet<&str> = parsed.alphanumeric_words_lower.iter()
+        .map(|w| w.as_str())
         .filter(|w| w.len() > 2)
         .collect();
 
@@ -520,7 +542,7 @@ fn compute_relevance(text: &str, context_keywords: &[&str]) -> f64 {
         .iter()
         .filter(|kw| {
             let kw_lower = kw.to_lowercase();
-            text_words.contains(&kw_lower) || text_lower.contains(&kw_lower)
+            text_words.contains(kw_lower.as_str()) || text_lower.contains(&kw_lower)
         })
         .count();
 
@@ -532,8 +554,9 @@ fn compute_relevance(text: &str, context_keywords: &[&str]) -> f64 {
 // Measures specificity and imperative language.
 // GRACE (Guan et al., 2024)
 
-fn compute_actionability(text: &str, is_code: bool) -> f64 {
-    let lower = text.to_lowercase();
+fn compute_actionability(parsed: &ParsedThought<'_>, is_code: bool) -> f64 {
+    let lower = &parsed.lower;
+    let text = parsed.text;
 
     // F16: Code inputs get automatic actionability boost
     if is_code {
@@ -593,18 +616,44 @@ fn compute_actionability(text: &str, is_code: bool) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+fn create_parsed<'a>(text: &'a str) -> ParsedThought<'a> {
+    let lower = text.to_lowercase();
+    let words: Vec<&str> = text.split_whitespace().collect();
+    let clean_words: Vec<&str> = words
+        .iter()
+        .map(|w| w.trim_matches(|c: char| !c.is_alphanumeric()))
+        .filter(|w| !w.is_empty())
+        .collect();
+    let alphanumeric_words_lower: Vec<String> = words
+        .iter()
+        .map(|w| w.trim_matches(|c: char| !c.is_alphanumeric()).to_lowercase())
+        .filter(|w| !w.is_empty())
+        .collect();
+    let sentences: Vec<&str> = text
+        .split(['.', '!', '?', '\n'])
+        .filter(|s| !s.trim().is_empty())
+        .collect();
+    ParsedThought {
+        text,
+        lower,
+        clean_words,
+        sentences,
+        alphanumeric_words_lower,
+    }
+}
+
 
     #[test]
     fn test_clarity_high_ttr() {
         let text = "The database schema requires careful migration with zero downtime.";
-        let clarity = compute_clarity(text);
+        let clarity = compute_clarity(&create_parsed(text));
         assert!(clarity > 0.5, "Expected high clarity, got {:.2}", clarity);
     }
 
     #[test]
     fn test_clarity_low_ttr() {
         let text = "the the the the the the the the";
-        let clarity = compute_clarity(text);
+        let clarity = compute_clarity(&create_parsed(text));
         assert!(clarity < 0.65, "Expected low clarity, got {:.2}", clarity);
     }
 
@@ -612,7 +661,7 @@ mod tests {
     fn test_depth_with_causal_chains() {
         let text = "Because the cache is stale, therefore the API returns old data. \
                      This implies we need a TTL strategy.";
-        let depth = compute_depth(text, false);
+        let depth = compute_depth(&create_parsed(text), false);
         assert!(depth > 0.3, "Expected measurable depth, got {:.2}", depth);
     }
 
@@ -620,7 +669,7 @@ mod tests {
     fn test_logic_connective_diversity() {
         let text = "First, we analyze the problem. However, the data is incomplete. \
                      If we proceed, then we risk errors. Therefore, we should validate first.";
-        let logic = compute_logic(text);
+        let logic = compute_logic(&create_parsed(text));
         assert!(logic > 0.5, "Expected high logic score, got {:.2}", logic);
     }
 
@@ -628,7 +677,7 @@ mod tests {
     fn test_relevance_matching() {
         let keywords = vec!["database", "migration", "schema"];
         let text = "The database migration requires updating the schema carefully.";
-        let relevance = compute_relevance(text, &keywords);
+        let relevance = compute_relevance(&create_parsed(text), &keywords);
         assert!(
             (relevance - 1.0).abs() < 0.01,
             "Expected 100% relevance, got {:.2}",
@@ -640,7 +689,7 @@ mod tests {
     fn test_relevance_no_match() {
         let keywords = vec!["quantum", "physics"];
         let text = "The database migration requires updating the schema.";
-        let relevance = compute_relevance(text, &keywords);
+        let relevance = compute_relevance(&create_parsed(text), &keywords);
         assert!(relevance < 0.1, "Expected low relevance, got {:.2}", relevance);
     }
 
@@ -648,7 +697,7 @@ mod tests {
     fn test_actionability_specific() {
         let text = "Implement the caching layer using Redis at port 6380. \
                      Create file `cache_service.rs` with TTL of 300 seconds.";
-        let actionability = compute_actionability(text, false);
+        let actionability = compute_actionability(&create_parsed(text), false);
         assert!(
             actionability > 0.3,
             "Expected high actionability, got {:.2}",
@@ -659,7 +708,7 @@ mod tests {
     #[test]
     fn test_actionability_vague() {
         let text = "Maybe we should probably do something about the thing somehow.";
-        let actionability = compute_actionability(text, false);
+        let actionability = compute_actionability(&create_parsed(text), false);
         assert!(
             actionability < 0.1,
             "Expected low actionability for vague text, got {:.2}",
