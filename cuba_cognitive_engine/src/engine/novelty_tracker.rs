@@ -2,18 +2,16 @@
 //
 // S4: Semantic Novelty / Information Gain Tracking
 //
-// Tracks vocabulary evolution across thought steps to measure
-// information gain — how much NEW information each thought introduces.
-// Based on Shannon Information Theory (1948) via Jaccard Distance.
-//
-// Replaces hardcoded `info_gain: 0.5` in EWMA signals.
+// UPGRADED: Jaccard-only → Jaccard + Semantic Embedding Similarity.
+// Jaccard detects new vocabulary; embeddings detect paraphrasing.
 //
 // Algorithm:
 // 1. Maintain running set of seen content terms
 // 2. For each new thought, compute new_terms / total_terms (Jaccard)
-// 3. Novelty naturally decays as more terms are seen
-// 4. High novelty = thought introduces fresh concepts
-// 5. Low novelty = thought repeats what's already been said
+// 3. Compute semantic similarity to most recent thought via embeddings
+// 4. If semantically similar (>0.85), penalize novelty by 30% (paraphrase detection)
+// 5. High novelty = thought introduces genuinely fresh concepts
+// 6. Low novelty = thought repeats or paraphrases what's already been said
 
 use std::collections::HashSet;
 use serde::Serialize;
@@ -25,6 +23,9 @@ pub struct NoveltyTracker {
     seen_terms: HashSet<String>,
     /// Number of thoughts analyzed.
     step_count: usize,
+    /// Most recent thought text (for semantic similarity comparison).
+    #[serde(skip)]
+    last_thought: Option<String>,
 }
 
 impl NoveltyTracker {
@@ -32,6 +33,7 @@ impl NoveltyTracker {
         Self {
             seen_terms: HashSet::new(),
             step_count: 0,
+            last_thought: None,
         }
     }
 
@@ -41,7 +43,9 @@ impl NoveltyTracker {
     /// - 1.0 = all terms are completely new (maximum information gain)
     /// - 0.0 = all terms were already seen (no new information)
     ///
-    /// Uses: `novelty = |new_terms| / |total_content_terms|`
+    /// Combines Jaccard vocabulary novelty with semantic embedding similarity.
+    /// If the new thought is semantically very similar to the previous one
+    /// (cosine > 0.85), novelty is penalized by 30% to catch paraphrasing.
     pub fn track_novelty(&mut self, thought: &str) -> f64 {
         self.step_count += 1;
 
@@ -50,16 +54,26 @@ impl NoveltyTracker {
             return 0.0;
         }
 
-        // Count genuinely new terms
+        // Count genuinely new terms (Jaccard component)
         let new_count = content_terms
             .iter()
             .filter(|t| !self.seen_terms.contains(*t))
             .count();
 
-        let novelty = new_count as f64 / content_terms.len() as f64;
+        let mut novelty = new_count as f64 / content_terms.len() as f64;
 
-        // Add all terms to seen set
+        // Semantic paraphrase detection via embeddings
+        if let Some(ref prev) = self.last_thought {
+            let sim = crate::engine::semantic_similarity::semantic_similarity(thought, prev);
+            if sim > 0.85 {
+                // High semantic similarity despite new words → likely paraphrase
+                novelty *= 0.7; // 30% penalty
+            }
+        }
+
+        // Update state
         self.seen_terms.extend(content_terms);
+        self.last_thought = Some(thought.to_string());
 
         novelty.clamp(0.0, 1.0)
     }
@@ -78,10 +92,33 @@ impl NoveltyTracker {
 }
 
 /// Extract content terms from text (filtered, normalized).
+///
+/// V8: Strips comments before extraction to prevent novelty evasion.
+/// An LLM could inflate novelty by appending `# random_hash_123` to each thought.
 fn extract_content_terms(text: &str) -> Vec<String> {
     let stopwords = crate::engine::shared_utils::stopwords();
 
-    text.split_whitespace()
+    // V8: Strip comment lines (Python # and Rust //) before term extraction.
+    // This prevents inflating novelty with random comment strings.
+    let stripped: String = text
+        .lines()
+        .map(|line| {
+            let trimmed = line.trim();
+            if trimmed.starts_with('#') || trimmed.starts_with("//") {
+                "" // Drop pure comment lines
+            } else if let Some(pos) = line.find(" # ") {
+                &line[..pos] // Strip inline Python comments
+            } else if let Some(pos) = line.find(" // ") {
+                &line[..pos] // Strip inline Rust comments
+            } else {
+                line
+            }
+        })
+        .collect::<Vec<&str>>()
+        .join(" ");
+
+    stripped
+        .split_whitespace()
         .map(|w| {
             w.chars()
                 .filter(|c| c.is_alphanumeric())

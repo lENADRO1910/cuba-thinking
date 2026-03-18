@@ -14,6 +14,7 @@
 
 use serde::Serialize;
 use std::collections::{HashMap, HashSet, VecDeque};
+// Note: HashSet is used by detect_cycles (Tarjan), VecDeque by max_depth (Kahn).
 
 /// A lightweight DAG for tracking thought relationships.
 #[derive(Debug, Clone, Serialize)]
@@ -60,43 +61,58 @@ impl ThoughtGraph {
     }
 
     /// Compute the longest path in the DAG (reasoning depth).
-    /// Uses topological sort + dynamic programming.
+    ///
+    /// V7: Uses Kahn's topological sort + dynamic programming.
+    /// Previous BFS approach incorrectly skipped longer paths to
+    /// already-visited nodes in DAGs with convergence.
+    ///
+    /// Complexity: O(V + E) — single pass.
     pub fn max_depth(&self) -> usize {
         if self.node_count == 0 {
             return 0;
         }
 
-        // Find nodes with no incoming edges (roots)
-        let roots: Vec<usize> = (0..self.node_count)
-            .filter(|id| {
-                self.reverse_edges
-                    .get(id)
-                    .is_none_or(|parents| parents.is_empty())
-            })
-            .collect();
+        // DP table: longest path ending at each node (1-indexed depth).
+        let mut dist = vec![0usize; self.node_count];
 
-        let mut max_depth = 0;
+        // In-degree for Kahn's algorithm.
+        let mut in_degree = vec![0usize; self.node_count];
+        for children in self.edges.values() {
+            for &child in children {
+                if child < self.node_count {
+                    in_degree[child] += 1;
+                }
+            }
+        }
 
-        // BFS from each root, tracking depth
-        for root in roots {
-            let mut queue = VecDeque::new();
-            let mut visited = HashSet::new();
-            queue.push_back((root, 1_usize));
-            visited.insert(root);
+        // Initialize roots (in-degree 0) with depth 1.
+        let mut queue = VecDeque::new();
+        for id in 0..self.node_count {
+            if in_degree[id] == 0 {
+                dist[id] = 1;
+                queue.push_back(id);
+            }
+        }
 
-            while let Some((node, depth)) = queue.pop_front() {
-                max_depth = max_depth.max(depth);
-                if let Some(children) = self.edges.get(&node) {
-                    for &child in children {
-                        if visited.insert(child) {
-                            queue.push_back((child, depth + 1));
+        // Process in topological order (Kahn's algorithm).
+        // For each node, propagate: dist[child] = max(dist[child], dist[node] + 1).
+        while let Some(node) = queue.pop_front() {
+            if let Some(children) = self.edges.get(&node) {
+                for &child in children {
+                    if child < self.node_count {
+                        dist[child] = dist[child].max(dist[node] + 1);
+                        in_degree[child] -= 1;
+                        if in_degree[child] == 0 {
+                            queue.push_back(child);
                         }
                     }
                 }
             }
         }
 
-        max_depth
+        // Handle orphan nodes (no edges, in_degree=0, dist=1 from init).
+        // Handle disconnected components (roots already seeded).
+        dist.iter().copied().max().unwrap_or(0)
     }
 
     /// Detect convergence: nodes with multiple incoming edges.
@@ -222,6 +238,28 @@ impl ThoughtGraph {
     #[allow(dead_code)]
     pub fn has_cycles(&self) -> bool {
         !self.detect_cycles().is_empty()
+    }
+
+    /// V9: Effective depth discounted by Tarjan cycle ratio.
+    ///
+    /// Raw depth from Kahn's algorithm counts all nodes equally.
+    /// Circular reasoning (petitio principii) inflates depth without
+    /// adding genuine reasoning progress. This metric penalizes depth
+    /// proportionally to the fraction of nodes involved in cycles.
+    ///
+    /// Formula: depth_eff = depth_raw × (1 - cycle_nodes / total_nodes)
+    ///
+    /// Based on DoT (Depth of Thought, Zhang et al. 2024).
+    #[allow(dead_code)]
+    pub fn effective_depth(&self) -> f64 {
+        let raw = self.max_depth() as f64;
+        if self.node_count == 0 {
+            return 0.0;
+        }
+        let cycles = self.detect_cycles();
+        let cycle_nodes: usize = cycles.iter().map(|c| c.len()).sum();
+        let penalty = 1.0 - (cycle_nodes as f64 / self.node_count as f64);
+        raw * penalty
     }
 
     /// Generate topology summary for the formatter.
@@ -355,6 +393,47 @@ mod tests {
         let graph = ThoughtGraph::new();
         assert_eq!(graph.max_depth(), 0);
         assert!(graph.convergence_points().is_empty());
+    }
+
+    // ─── V7: DP Topological Sort Depth Tests ──────
+
+    #[test]
+    fn test_convergent_dag_depth() {
+        // P3-A regression test: BFS incorrectly returned 3 for this graph.
+        // The longest path is 0→2→1→3 = depth 4.
+        //
+        //    0 → 1 → 3
+        //    0 → 2 → 1
+        //
+        // BFS visits node 1 at depth 2 (via 0→1), marks visited.
+        // Path 0→2→1→3 has depth 4 but node 1 already visited → skipped.
+        let mut graph = ThoughtGraph::new();
+        for i in 0..4 {
+            graph.add_node(i);
+        }
+        graph.add_edge(0, 1); // 0 → 1
+        graph.add_edge(0, 2); // 0 → 2
+        graph.add_edge(1, 3); // 1 → 3
+        graph.add_edge(2, 1); // 2 → 1 (convergence: node 1 reachable via 0→1 AND 0→2→1)
+        assert_eq!(
+            graph.max_depth(), 4,
+            "Longest path 0→2→1→3 should give depth 4, not 3"
+        );
+    }
+
+    #[test]
+    fn test_diamond_dag_depth() {
+        // Diamond: 0 → {1, 2} → 3
+        // All paths have same depth = 3
+        let mut graph = ThoughtGraph::new();
+        for i in 0..4 {
+            graph.add_node(i);
+        }
+        graph.add_edge(0, 1);
+        graph.add_edge(0, 2);
+        graph.add_edge(1, 3);
+        graph.add_edge(2, 3);
+        assert_eq!(graph.max_depth(), 3, "Diamond DAG depth should be 3");
     }
 
     // ─── V6-2: Tarjan SCC Cycle Detection Tests ──────

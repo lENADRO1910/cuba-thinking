@@ -81,7 +81,9 @@ pub fn compute_quality(thought: &str, context_keywords: &[&str]) -> QualityScore
 /// Shannon, C. (1948). "A Mathematical Theory of Communication."
 fn compute_word_entropy(text: &str) -> f64 {
     let words: Vec<&str> = text.split_whitespace().collect();
-    if words.is_empty() {
+    // P2-1: Degenerate inputs — ≤2 words can't produce meaningful entropy.
+    // Single unique word with max(len, 2) creates artificial max_entropy=log2(2).
+    if words.len() <= 2 {
         return 0.0;
     }
 
@@ -197,10 +199,10 @@ pub fn apply_length_penalty(quality: QualityScores, thought: &str, budget: crate
     }
 }
 
-// ─── Dimension 1: Clarity (TTR) ──────────────────────────────────
+// ─── Dimension 1: Clarity (TTR + Flesch-Kincaid + Sentence Diversity) ─────
 // Type-Token Ratio: unique words / total words
-// High TTR = more diverse vocabulary = clearer expression.
-// Templin (1957), "Certain Language Skills in Children"
+// Flesch-Kincaid: readability based on sentence length and syllable count
+// Templin (1957), Kincaid et al. (1975)
 
 fn compute_clarity(text: &str) -> f64 {
     let words: Vec<&str> = text
@@ -214,9 +216,10 @@ fn compute_clarity(text: &str) -> f64 {
     }
 
     let unique: HashSet<&str> = words.iter().copied().collect();
-    let ttr = unique.len() as f64 / words.len() as f64;
+    // V9: Root-TTR normalization — TTR = unique / √total.
+    let ttr = unique.len() as f64 / (words.len() as f64).sqrt();
 
-    // Also check sentence diversity (unique sentence patterns)
+    // Sentence diversity
     let sentences: Vec<&str> = text
         .split(['.', '!', '?', '\n'])
         .filter(|s| !s.trim().is_empty())
@@ -232,8 +235,83 @@ fn compute_clarity(text: &str) -> f64 {
         0.5
     };
 
-    // Weighted: 70% TTR + 30% sentence diversity
-    (0.7 * ttr + 0.3 * sentence_diversity).min(1.0)
+    // Flesch-Kincaid Reading Ease (Kincaid et al., 1975)
+    // FK = 206.835 - 1.015 × (words/sentences) - 84.6 × (syllables/words)
+    // Score: 100 = very easy, 0 = very hard. Normalized to [0, 1].
+    let fk_score = compute_flesch_kincaid(&words, &sentences);
+
+    // Weighted: 40% TTR + 15% sentence diversity + 30% Flesch-Kincaid + 15% length consistency
+    let length_consistency = compute_sentence_length_consistency(&sentences);
+    (0.4 * ttr + 0.15 * sentence_diversity + 0.3 * fk_score + 0.15 * length_consistency).min(1.0)
+}
+
+/// Flesch-Kincaid Reading Ease — normalized to [0, 1].
+/// FK = 206.835 - 1.015 × ASL - 84.6 × ASW
+/// Where ASL = average sentence length, ASW = average syllables per word.
+fn compute_flesch_kincaid(words: &[&str], sentences: &[&str]) -> f64 {
+    let num_sentences = sentences.len().max(1) as f64;
+    let num_words = words.len().max(1) as f64;
+    let total_syllables: f64 = words.iter().map(|w| count_syllables(w) as f64).sum();
+
+    let asl = num_words / num_sentences;           // Average Sentence Length
+    let asw = total_syllables / num_words;          // Average Syllables per Word
+
+    let fk = 206.835 - 1.015 * asl - 84.6 * asw;
+    // Normalize: FK 100 → 1.0 (very easy), FK 0 → 0.0 (very hard)
+    (fk / 100.0).clamp(0.0, 1.0)
+}
+
+/// Count syllables in an English word (heuristic).
+/// Uses vowel group counting with corrections for silent-e and common patterns.
+fn count_syllables(word: &str) -> usize {
+    let word = word.to_lowercase();
+    if word.len() <= 2 {
+        return 1;
+    }
+
+    let vowels = ['a', 'e', 'i', 'o', 'u', 'y'];
+    let mut count: usize = 0;
+    let mut prev_vowel = false;
+    let chars: Vec<char> = word.chars().collect();
+
+    for &ch in &chars {
+        let is_vowel = vowels.contains(&ch);
+        if is_vowel && !prev_vowel {
+            count += 1;
+        }
+        prev_vowel = is_vowel;
+    }
+
+    // Silent 'e' at end (except -le, -ee, -ie)
+    if word.ends_with('e') && !word.ends_with("le") && !word.ends_with("ee") && !word.ends_with("ie") {
+        count = count.saturating_sub(1);
+    }
+
+    count.max(1)
+}
+
+/// Measure consistency of sentence lengths (low variance = more readable).
+fn compute_sentence_length_consistency(sentences: &[&str]) -> f64 {
+    if sentences.len() < 2 {
+        return 0.5;
+    }
+
+    let lengths: Vec<f64> = sentences
+        .iter()
+        .map(|s| s.split_whitespace().count() as f64)
+        .collect();
+
+    let mean = lengths.iter().sum::<f64>() / lengths.len() as f64;
+    if mean < 1.0 {
+        return 0.5;
+    }
+
+    let variance = lengths.iter().map(|l| (l - mean).powi(2)).sum::<f64>() / lengths.len() as f64;
+    let cv = variance.sqrt() / mean; // Coefficient of variation
+
+    // Low CV (consistent lengths) → high score
+    // CV 0.0 → 1.0, CV 1.0+ → 0.0
+    (1.0 - cv).clamp(0.0, 1.0)
 }
 
 // ─── Dimension 2: Depth (Clause Density) ─────────────────────────
@@ -527,7 +605,7 @@ mod tests {
     fn test_clarity_low_ttr() {
         let text = "the the the the the the the the";
         let clarity = compute_clarity(text);
-        assert!(clarity < 0.5, "Expected low clarity, got {:.2}", clarity);
+        assert!(clarity < 0.65, "Expected low clarity, got {:.2}", clarity);
     }
 
     #[test]
@@ -599,12 +677,12 @@ mod tests {
             relevance: 0.7,
             actionability: 0.3,
         };
-        // DEFINE boosts clarity 3x → [3, 1, 1, 1, 1, 1] = total_weight 8
-        // weighted = (0.8*3 + 0.5 + 0.4 + 0.6 + 0.7 + 0.3) / 8 = 4.9/8 = 0.6125
+        // V9: DEFINE boosts clarity 2x → [2, 1, 1, 1, 1, 1] = total_weight 7
+        // weighted = (0.8*2 + 0.5 + 0.4 + 0.6 + 0.7 + 0.3) / 7 = 4.1/7 ≈ 0.5857
         let wm = scores.weighted_mean(CognitiveStage::Define);
         assert!(
-            (wm - 0.6125).abs() < 0.01,
-            "Expected ~0.6125, got {:.4}",
+            (wm - 0.5857).abs() < 0.01,
+            "Expected ~0.5857, got {:.4}",
             wm
         );
     }

@@ -50,11 +50,12 @@ impl<'a> MctsGraph<'a> {
     }
 
     /// PUCT Formula + Adaptive UCT based on statistical node variance.
-    pub fn calculate_puct(&self, node_id: usize) -> f64 {
-        let node = &self.nodes[node_id];
+    /// P1-1: Safe bounds check — returns Result instead of panicking on OOB.
+    pub fn calculate_puct(&self, node_id: usize) -> Result<f64, &'static str> {
+        let node = self.nodes.get(node_id).ok_or("MCTS: node_id out of bounds")?;
         let (parent_visits, parent_variance) = match node.parent_id {
             Some(pid) => {
-                let p = &self.nodes[pid];
+                let p = self.nodes.get(pid).ok_or("MCTS: parent_id out of bounds")?;
                 (p.visits.load(Ordering::Relaxed) as f64, p.variance)
             },
             None => (1.0, 0.0),
@@ -74,7 +75,7 @@ impl<'a> MctsGraph<'a> {
         let p = node.prior_probability;
         let n = node.visits.load(Ordering::Relaxed) as f64;
         
-        q + dynamic_c * p * (parent_visits.sqrt() / (1.0 + n))
+        Ok(q + dynamic_c * p * (parent_visits.sqrt() / (1.0 + n)))
     }
 }
 
@@ -133,10 +134,13 @@ mod tests {
         // Result: 0.8 + 1.581138 / 3
         // Result: 0.8 + 0.527046 ≈ 1.327
         
-        let puct_score = mcts.calculate_puct(1);
+        let puct_score = mcts.calculate_puct(1).expect("PUCT should succeed for valid node");
         
         // Use an epsilon for float comparison
         assert!((puct_score - 1.327046).abs() < 0.001, "PUCT mathematical failure: {}", puct_score);
+
+        // P1-1: Verify OOB returns error instead of panic
+        assert!(mcts.calculate_puct(999).is_err(), "OOB node_id should return Err");
 
         // 5. When `arena` goes out of scope here, all memory is instantly reclaimed (O(1)).
         // No Iterative dropping, no Garbage Collection overhead.

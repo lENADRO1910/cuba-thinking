@@ -13,3 +13,4 @@ cuba_cognitive_engine/target/
 .cargo/
 *.swp
 *.swo
+cuba_cognitive_engine/.fastembed_cache/
