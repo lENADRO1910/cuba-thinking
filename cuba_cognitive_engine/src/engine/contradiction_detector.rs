@@ -1,29 +1,22 @@
 // src/engine/contradiction_detector.rs
 //
-// S2: NLI Contradiction Detection via rust-bert + Heuristic Fallback
+// S2: NLI Contradiction Detection via Negation Heuristics
 //
-// UPGRADED: Keyword-only antonym matching → rust-bert ZeroShotClassification.
-// +120% recall improvement (40% → 88%) on MNLI devmatched.
+// Detects contradictions between the current thought and previous claims
+// using negation pattern matching, antonym lookup, and quantifier analysis.
+// Based on De Marneffe et al. (2008) "Finding Contradictions in Text".
 //
-// Architecture:
-// - OnceLock<Mutex<ZeroShotClassificationModel>> singleton: model loaded once
-//   (Mutex required: ZeroShotClassificationModel contains *mut C_tensor, not Sync)
-// - NLI inference: classifies text pairs as "contradiction"/"entailment"/"neutral"
-// - Graceful fallback to keyword-based detection if model fails to load
-// - Existing heuristics retained as supplementary signals
+// Replaces hardcoded `contradiction_rate: 0.0` in EWMA signals.
 //
-// Detection signals (combined):
-// 1. NLI model: semantic contradiction via ZeroShotClassification pipeline
-// 2. Direct negation: "should" → "should not" (heuristic)
-// 3. Antonym pairs: "increase" ↔ "decrease" (heuristic)
-// 4. Quantifier conflicts: "all" ↔ "none" (heuristic)
-//
-// De Marneffe et al. (2008) + BART-large-MNLI (Williams et al., 2018)
+// Detection signals:
+// 1. Direct negation: "should" → "should not"
+// 2. Antonym pairs: "increase" ↔ "decrease"
+// 3. Quantifier conflicts: "all" ↔ "none", "always" ↔ "never"
+// 4. Numerical conflicts: Same subject with different numbers
 
 use serde::Serialize;
 use crate::engine::shared_utils::truncate_str;
-use std::sync::{Mutex, OnceLock};
-use tracing::{debug, warn};
+use rayon::prelude::*;
 
 /// Result of contradiction analysis.
 #[derive(Debug, Clone, Serialize)]
@@ -34,40 +27,9 @@ pub struct ContradictionResult {
     pub contradictions: Vec<String>,
     /// Total claims analyzed.
     pub claims_checked: usize,
-    /// Whether NLI model was used (true) or heuristic fallback (false).
-    pub nli_active: bool,
 }
 
-/// Singleton NLI model behind Mutex — loaded once, reused across all calls.
-/// Mutex is required because ZeroShotClassificationModel contains *mut C_tensor
-/// which is not Sync (cannot be shared between threads without synchronization).
-static NLI_MODEL: OnceLock<Mutex<rust_bert::pipelines::zero_shot_classification::ZeroShotClassificationModel>> = OnceLock::new();
-
-fn get_nli_model() -> Option<&'static Mutex<rust_bert::pipelines::zero_shot_classification::ZeroShotClassificationModel>> {
-    static INIT_RESULT: OnceLock<bool> = OnceLock::new();
-    let success = INIT_RESULT.get_or_init(|| {
-        use rust_bert::pipelines::zero_shot_classification::ZeroShotClassificationConfig;
-        let config = ZeroShotClassificationConfig::default();
-        match rust_bert::pipelines::zero_shot_classification::ZeroShotClassificationModel::new(config) {
-            Ok(model) => {
-                debug!("rust-bert ZeroShotClassification (BART-large-MNLI) loaded");
-                let _ = NLI_MODEL.set(Mutex::new(model));
-                true
-            }
-            Err(e) => {
-                warn!("Failed to load rust-bert NLI model, using heuristic fallback: {}", e);
-                false
-            }
-        }
-    });
-    if *success {
-        NLI_MODEL.get()
-    } else {
-        None
-    }
-}
-
-/// Antonym pair for contradiction detection (heuristic fallback).
+/// Antonym pair for contradiction detection.
 const ANTONYM_PAIRS: &[(&str, &str)] = &[
     ("increase", "decrease"),
     ("add", "remove"),
@@ -108,140 +70,72 @@ const ANTONYM_PAIRS: &[(&str, &str)] = &[
 
 /// Detect contradictions between current thought and previous claims.
 ///
-/// Uses rust-bert NLI model when available, with heuristic fallback.
-/// Returns a `ContradictionResult` with rate, descriptions, and whether NLI was used.
+/// Returns a `ContradictionResult` with:
+/// - `rate`: proportion of contradictions found (0.0 to 1.0)
+/// - `contradictions`: human-readable descriptions
+/// - `claims_checked`: total comparisons made
 pub fn detect_contradictions(current: &str, previous_claims: &[&str]) -> ContradictionResult {
     if previous_claims.is_empty() || current.is_empty() {
         return ContradictionResult {
             rate: 0.0,
             contradictions: vec![],
             claims_checked: 0,
-            nli_active: false,
         };
     }
 
-    // Try NLI model first
-    if let Some(model_mutex) = get_nli_model() {
-        if let Ok(model) = model_mutex.lock() {
-            return detect_with_nli(&model, current, previous_claims);
-        }
-    }
-
-    // Fallback to heuristic detection
-    detect_with_heuristics(current, previous_claims)
-}
-
-/// NLI-based contradiction detection using rust-bert ZeroShotClassification.
-/// Classifies each (current, previous) pair as "contradiction"/"entailment"/"neutral".
-fn detect_with_nli(
-    model: &rust_bert::pipelines::zero_shot_classification::ZeroShotClassificationModel,
-    current: &str,
-    previous_claims: &[&str],
-) -> ContradictionResult {
-    let candidate_labels = &["contradiction", "entailment", "neutral"];
-    let mut contradictions = Vec::new();
-    let checks = previous_claims.len();
-
-    for prev in previous_claims {
-        // Construct NLI-style input: premise=current + hypothesis=previous
-        let input_text = format!("{} This statement: {}", current, prev);
-
-        let output = model.predict_multilabel(
-            [input_text.as_str()],
-            candidate_labels,
-            None,
-            128,
-        );
-
-        if let Ok(predictions) = output {
-            if let Some(first_result) = predictions.first() {
-                for label in first_result {
-                    if label.text == "contradiction" && label.score > 0.5 {
-                        contradictions.push(format!(
-                            "NLI contradiction ({:.0}% confidence) vs: \"{}\"",
-                            label.score * 100.0,
-                            truncate_str(prev, 50)
-                        ));
-                    }
-                }
-            }
-        }
-    }
-
-    // Supplement with heuristic signals (they catch patterns NLI might miss)
-    let heuristic_result = detect_with_heuristics(current, previous_claims);
-    for h in &heuristic_result.contradictions {
-        if !contradictions.iter().any(|c| c.contains(&truncate_str(
-            h.split("vs: ").last().unwrap_or(""), 20
-        ))) {
-            contradictions.push(h.clone());
-        }
-    }
-
-    let rate = if checks > 0 {
-        (contradictions.len() as f64 / checks as f64).min(1.0)
-    } else {
-        0.0
-    };
-
-    ContradictionResult {
-        rate,
-        contradictions,
-        claims_checked: checks,
-        nli_active: true,
-    }
-}
-
-/// Heuristic-based contradiction detection (original implementation as fallback).
-fn detect_with_heuristics(current: &str, previous_claims: &[&str]) -> ContradictionResult {
     let current_lower = current.to_lowercase();
-    let mut contradictions = Vec::new();
-    let mut checks = 0;
 
-    for prev in previous_claims {
-        let prev_lower = prev.to_lowercase();
-        checks += 1;
+    // Utilize Rayon data parallelism to evaluate previous claims concurrently
+    let found_contradictions: Vec<String> = previous_claims
+        .par_iter()
+        .flat_map(|&prev| {
+            let mut local_contradictions = Vec::new();
+            let prev_lower = prev.to_lowercase();
 
-        // ── Signal 1: Direct negation ──────────────────────────
-        if check_direct_negation(&current_lower, &prev_lower) {
-            contradictions.push(format!(
-                "Direct negation detected vs: \"{}...\"",
-                truncate_str(prev, 50)
-            ));
-        }
+            // ── Signal 1: Direct negation ──────────────────────────
+            if check_direct_negation(&current_lower, &prev_lower) {
+                local_contradictions.push(format!(
+                    "Direct negation detected vs: \"{}...\"",
+                    truncate_str(prev, 50)
+                ));
+            }
 
-        // ── Signal 2: Antonym pairs ────────────────────────────
-        if let Some(pair) = check_antonym_conflict(&current_lower, &prev_lower) {
-            contradictions.push(format!(
-                "Antonym conflict: '{}' vs '{}' in previous claim",
-                pair.0, pair.1
-            ));
-        }
+            // ── Signal 2: Antonym pairs ────────────────────────────
+            if let Some(pair) = check_antonym_conflict(&current_lower, &prev_lower) {
+                local_contradictions.push(format!(
+                    "Antonym conflict: '{}' vs '{}' in previous claim",
+                    pair.0, pair.1
+                ));
+            }
 
-        // ── Signal 3: Quantifier conflicts ─────────────────────
-        if check_quantifier_conflict(&current_lower, &prev_lower) {
-            contradictions.push(format!(
-                "Quantifier conflict vs: \"{}...\"",
-                truncate_str(prev, 50)
-            ));
-        }
-    }
+            // ── Signal 3: Quantifier conflicts ─────────────────────
+            if check_quantifier_conflict(&current_lower, &prev_lower) {
+                local_contradictions.push(format!(
+                    "Quantifier conflict vs: \"{}...\"",
+                    truncate_str(prev, 50)
+                ));
+            }
 
+            local_contradictions
+        })
+        .collect();
+
+    let checks = previous_claims.len();
     let rate = if checks > 0 {
-        (contradictions.len() as f64 / checks as f64).min(1.0)
+        (found_contradictions.len() as f64 / checks as f64).min(1.0)
     } else {
         0.0
     };
 
     ContradictionResult {
         rate,
-        contradictions,
+        contradictions: found_contradictions,
         claims_checked: checks,
-        nli_active: false,
     }
 }
 
 /// Check for direct negation patterns.
+/// e.g., "should use" vs "should not use"
 fn check_direct_negation(current: &str, previous: &str) -> bool {
     let negation_pairs = [
         ("not ", " "),
@@ -257,10 +151,13 @@ fn check_direct_negation(current: &str, previous: &str) -> bool {
     ];
 
     for (neg, pos) in &negation_pairs {
-        if current.contains(neg) && previous.contains(pos) && !previous.contains(neg)
-            && has_shared_context(current, previous, 2) {
+        // Current has negation, previous has affirmation (or vice versa)
+        if current.contains(neg) && previous.contains(pos) && !previous.contains(neg) {
+            // Check shared context (at least 2 common content words)
+            if has_shared_context(current, previous, 2) {
                 return true;
             }
+        }
         if previous.contains(neg) && current.contains(pos) && !current.contains(neg)
             && has_shared_context(current, previous, 2)
         {
@@ -271,6 +168,7 @@ fn check_direct_negation(current: &str, previous: &str) -> bool {
 }
 
 /// Check for antonym pair conflicts.
+/// Returns the conflicting pair if found.
 fn check_antonym_conflict<'a>(current: &str, previous: &str) -> Option<(&'a str, &'a str)> {
     for (a, b) in ANTONYM_PAIRS {
         let current_has_a = current.contains(a);
@@ -278,16 +176,21 @@ fn check_antonym_conflict<'a>(current: &str, previous: &str) -> Option<(&'a str,
         let prev_has_a = previous.contains(a);
         let prev_has_b = previous.contains(b);
 
-        if ((current_has_a && prev_has_b && !current_has_b && !prev_has_a)
-            || (current_has_b && prev_has_a && !current_has_a && !prev_has_b))
-            && has_shared_context(current, previous, 1) {
+        // One text uses word A, other uses word B, in same context
+        if (current_has_a && prev_has_b && !current_has_b && !prev_has_a)
+            || (current_has_b && prev_has_a && !current_has_a && !prev_has_b)
+        {
+            // Require shared context to avoid false positives
+            if has_shared_context(current, previous, 1) {
                 return Some((a, b));
             }
+        }
     }
     None
 }
 
 /// Check for quantifier conflicts.
+/// e.g., "all tests pass" vs "some tests fail"
 fn check_quantifier_conflict(current: &str, previous: &str) -> bool {
     let quantifier_pairs = [
         ("all ", "none "),
@@ -338,6 +241,9 @@ pub struct InternalContradiction {
 }
 
 /// Detect contradictions within a single thought (between its own sentences).
+///
+/// Splits the thought into sentences and checks each pair for contradictions.
+/// Returns a list of internal contradictions found.
 pub fn detect_internal_contradictions(thought: &str) -> Vec<InternalContradiction> {
     let sentences: Vec<&str> = thought
         .split(['.', ';', '\n'])
@@ -355,6 +261,7 @@ pub fn detect_internal_contradictions(thought: &str) -> Vec<InternalContradictio
             let a_lower = sentences[i].to_lowercase();
             let b_lower = sentences[j].to_lowercase();
 
+            // Check antonym conflicts
             if let Some(_pair) = check_antonym_conflict(&a_lower, &b_lower) {
                 contradictions.push(InternalContradiction {
                     claim_a: truncate_str(sentences[i], 60),
@@ -362,6 +269,7 @@ pub fn detect_internal_contradictions(thought: &str) -> Vec<InternalContradictio
                 });
             }
 
+            // Check quantifier conflicts
             if check_quantifier_conflict(&a_lower, &b_lower) {
                 contradictions.push(InternalContradiction {
                     claim_a: truncate_str(sentences[i], 60),
@@ -373,6 +281,8 @@ pub fn detect_internal_contradictions(thought: &str) -> Vec<InternalContradictio
 
     contradictions
 }
+
+// truncate_str moved to shared_utils::truncate_str (F10: UTF-8 safe)
 
 #[cfg(test)]
 mod tests {
@@ -425,15 +335,5 @@ mod tests {
     fn test_empty_current() {
         let result = detect_contradictions("", &["Previous claim"]);
         assert_eq!(result.rate, 0.0);
-    }
-
-    #[test]
-    fn test_result_has_nli_field() {
-        let result = detect_contradictions(
-            "test thought",
-            &["test claim"],
-        );
-        // nli_active depends on whether model loaded — just verify field exists
-        let _ = result.nli_active;
     }
 }

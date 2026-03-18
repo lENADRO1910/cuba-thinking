@@ -4,46 +4,41 @@ version = "0.1.0"
 edition = "2021"
 description = "SOTA Deep Reasoning MCTS Orchestrator for Local Hardware via MCP"
 authors = ["Antigravity <cuba-thinking>"]
-license = "MIT"
-publish = false
 
 [dependencies]
 # Async Runtime
-tokio = { version = "1.50", features = ["full", "sync", "macros"] }
+tokio = { version = "1.36", features = ["full", "sync", "macros"] }
 
 # Protocol & Serialization
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+jsonrpc-core = "18.0"
+
 
 # Error Handling
 anyhow = "1.0"
-thiserror = "2.0"
+thiserror = "1.0"
 
 # Logging & Observability (Structlog equivalent)
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 
 # Memory Bounds and Arena Allocators (For O(1) MCTS cleanup)
-bumpalo = { version = "3.20", features = ["collections"] }  # Fast arena allocation
+bumpalo = { version = "3.14", features = ["collections"] } # Fast arena allocation
 typed-arena = "2.0"
 
 # Mathematical verification (Micro-PRM and Physics)
-regex = "1.12"
-futures = "0.3"
-mimalloc = { version = "0.1", default-features = false }
-pyo3 = { version = "0.28", features = ["auto-initialize"] }
-
-# Semantic Intelligence (Phase 1-2: Embeddings + NLI)
-fastembed = "5"                     # ONNX embeddings (BGE-small, AllMiniLM) — ~33MB model lazy-downloaded
-lru = "0.16"                        # LRU cache for embeddings + sandbox evaluations
-dashmap = "6"                       # Lock-free concurrent hashmap for session store
-rust-bert = { version = "0.23", features = ["download-libtorch"] }  # NLI + ZSC + Sentiment — auto-downloads libtorch v2.4
-
-# Fix: force console with std feature for indicatif 0.16 compatibility (rust-bert transitive dep)
-console = { version = "0.16", features = ["std"] }
+# We will invoke python sympy via external process if needed, or use a Rust equivalent if simple
+regex = "1.10"
+futures = "0.3.32"
+mimalloc = { version = "0.1.48", default-features = false }
+pyo3 = { version = "0.21.2", features = ["auto-initialize"] }
+rayon = "1.11.0"
+dashmap = "6.1.0"
+simd-json = "0.17.0"
 
 [profile.release]
 opt-level = 3
-lto = "fat"           # Maximum optimization across all crates
-codegen-units = 1     # Maximize ILP and inlining
-panic = "abort"       # Minimal binary size, fail fast on OOM
+lto = "fat" # Maximum optimization across all crates
+codegen-units = 1 # Maximize ILP and inlining
+panic = "abort" # Minimal binary size, fail fast on OOM
