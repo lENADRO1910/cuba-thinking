@@ -237,44 +237,6 @@ impl EwmaTracker {
         self.value < self.budget_mode.mcts_threshold()
     }
 
-    /// V5-4: Hedged MCTS Rejection — stochastic threshold zone.
-    ///
-    /// Prevents Reward Hacking (NeurIPS 2025): LLMs mathematically discover
-    /// deterministic thresholds and engineer outputs to surf at threshold+ε.
-    /// The sigmoid zone makes the exact cutoff unknowable.
-    ///
-    /// Zones:
-    /// - diff < -0.05: deterministic reject (saves compute)
-    /// - diff > +0.05: deterministic accept
-    /// - [-0.05, +0.05]: sigmoid probability P(reject) = 1/(1+e^(20·diff))
-    ///
-    /// Seed: O(1) from EWMA state — no RNG dependency.
-    #[allow(dead_code)]
-    pub fn should_reject_hedged(&self) -> bool {
-        if self.step_count <= 3 {
-            return false; // Warmup guard
-        }
-
-        let threshold = self.budget_mode.mcts_threshold();
-        let diff = self.value - threshold;
-
-        // Deterministic zones (avoid unnecessary computation)
-        if diff < -0.05 {
-            return true;
-        }
-        if diff > 0.05 {
-            return false;
-        }
-
-        // Hedging zone: sigmoid rejection probability
-        // At diff=0 → P=50%, diff=-0.04 → P≈68%, diff=+0.04 → P≈31%
-        let rejection_prob = 1.0 / (1.0 + (20.0 * diff).exp());
-
-        // O(1) deterministic seed from EWMA state — reproducible but unpredictable
-        let seed = (self.value * 10000.0).fract().abs();
-        seed < rejection_prob
-    }
-
     /// V5-5: Process Advantage Verifier (PAV) — ICLR 2026.
     ///
     /// Measures how much the current step exceeds the historical baseline
