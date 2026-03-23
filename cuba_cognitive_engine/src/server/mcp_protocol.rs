@@ -133,16 +133,16 @@ pub struct McpServer {
 }
 
 impl McpServer {
-    pub fn new() -> Self {
+    pub fn new() -> Result<Self> {
         // DEBT-T07: Direct sandbox, no router indirection
-        let sandbox = Arc::new(LocalReasoningEngine::new("cognitive-engine-v3", 2).unwrap());
+        let sandbox = Arc::new(LocalReasoningEngine::new("cognitive-engine-v3", 2)?);
         let sessions = Arc::new(crate::engine::thought_session::SessionStore::new());
         let metrics = Arc::new(RedMetrics::new());
-        Self {
+        Ok(Self {
             sandbox,
             sessions,
             metrics,
-        }
+        })
     }
 
     /// Primary Execution Loop (STDIO)

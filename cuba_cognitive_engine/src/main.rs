@@ -17,7 +17,7 @@ async fn main() -> anyhow::Result<()> {
 
     // 2. Initialize the MCP Protocol Server
     // This replaces the entire Python layer.
-    let mcp_server = std::sync::Arc::new(server::McpServer::new());
+    let mcp_server = std::sync::Arc::new(server::McpServer::new()?);
 
     // 3. Block on the execution loop
     mcp_server.run().await?;
