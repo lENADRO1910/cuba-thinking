@@ -230,4 +230,29 @@ mod tests {
         let ar = r.analyze_reasoning.snapshot();
         assert_eq!(ar.requests, 0);
     }
+
+    #[test]
+    fn test_tool_metrics_zero_duration() {
+        let m = ToolMetrics::new();
+        m.record(Duration::ZERO, false);
+        let snap = m.snapshot();
+        assert_eq!(snap.requests, 1);
+        assert_eq!(snap.errors, 0);
+        assert_eq!(snap.avg_duration_ms, 0.0);
+        assert_eq!(snap.max_duration_ms, 0.0);
+    }
+
+    #[test]
+    fn test_analyze_reasoning_zero_duration() {
+        let r = RedMetrics::new();
+        // Missing/empty context scenario often results in near-zero duration
+        r.record_call("analyze_reasoning", Duration::ZERO, false);
+
+        let ar = r.analyze_reasoning.snapshot();
+        assert_eq!(ar.requests, 1);
+        assert_eq!(ar.avg_duration_ms, 0.0);
+
+        let total = r.total.snapshot();
+        assert_eq!(total.requests, 1);
+    }
 }
