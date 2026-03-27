@@ -1,5 +1,4 @@
 // src/engine/mod.rs
-pub mod mcts_graph;
 pub mod micro_prm;
 pub mod sandbox;
 pub mod shared_utils;
@@ -10,11 +9,9 @@ pub mod bias_detector;
 pub mod budget;
 pub mod ewma_reward;
 pub mod formatter;
-pub mod memory_bridge;
 pub mod metacognition;
 pub mod quality_metrics;
 pub mod stage_engine;
-pub mod thought_graph;
 
 // ─── Phase 3: Semantics (v3.1) ──────────────────────────────────
 pub mod claim_grounding;

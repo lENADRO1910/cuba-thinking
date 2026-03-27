@@ -78,17 +78,6 @@ impl NoveltyTracker {
         novelty.clamp(0.0, 1.0)
     }
 
-    /// Get the total number of unique terms seen across all thoughts.
-    #[allow(dead_code)]
-    pub fn vocabulary_size(&self) -> usize {
-        self.seen_terms.len()
-    }
-
-    /// Get the number of thoughts analyzed.
-    #[allow(dead_code)]
-    pub fn steps(&self) -> usize {
-        self.step_count
-    }
 }
 
 /// Extract content terms from text (filtered, normalized).

@@ -17,11 +17,9 @@ use crate::engine::anti_hallucination::HallucinationVerdict;
 use crate::engine::bias_detector::DetectedBias;
 use crate::engine::budget::BudgetMode;
 use crate::engine::ewma_reward::EwmaTracker;
-use crate::engine::memory_bridge::MemoryInstruction;
 use crate::engine::metacognition::MetacognitiveReport;
 use crate::engine::quality_metrics::QualityScores;
 use crate::engine::stage_engine::{CognitiveStage, StageSession};
-use crate::engine::thought_graph::TopologySummary;
 
 /// Format the complete engine output into a compact, actionable string.
 #[allow(clippy::too_many_arguments)]
@@ -33,8 +31,6 @@ pub fn format_engine_output(
     verdict: &HallucinationVerdict,
     metacog: &MetacognitiveReport,
     biases: &[DetectedBias],
-    memory_instructions: &[MemoryInstruction],
-    topology: Option<&TopologySummary>,
     _thought_number: usize,
     is_sandbox_result: bool,
     sandbox_output: Option<&str>,
@@ -123,26 +119,6 @@ pub fn format_engine_output(
         ));
     }
 
-    // ─── GoT Topology (compact) ──────────────────────────────────
-    if let Some(topo) = topology {
-        if topo.total_nodes > 1 {
-            output.push_str(&format!("{}\n", topo.display()));
-        }
-    }
-
-    // ─── Memory Instructions ─────────────────────────────────────
-    if !memory_instructions.is_empty() {
-        output.push_str("\n🧠 **Memory Instructions**:\n");
-        for (i, instr) in memory_instructions.iter().enumerate() {
-            output.push_str(&format!(
-                "{}. Invoke `{}` — {}\n",
-                i + 1,
-                instr.tool_name,
-                instr.reason
-            ));
-        }
-    }
-
     // ─── Rejection Notice ────────────────────────────────────────
     if verdict.should_reject {
         output.push_str(
@@ -156,6 +132,79 @@ pub fn format_engine_output(
     }
 
     output
+}
+
+/// Structured JSON output format — ~30% token savings over markdown.
+///
+/// Returns a compact JSON string with only actionable data.
+/// No emojis, no markdown bold, no fences — pure structured data.
+#[allow(clippy::too_many_arguments)]
+pub fn format_engine_output_structured(
+    stage: CognitiveStage,
+    quality: &QualityScores,
+    ewma: &EwmaTracker,
+    verdict: &HallucinationVerdict,
+    metacog: &MetacognitiveReport,
+    biases: &[DetectedBias],
+    is_sandbox_result: bool,
+    sandbox_output: Option<&str>,
+    budget: BudgetMode,
+) -> String {
+    let weak_threshold = 0.4;
+    let mut weak_dims = serde_json::Map::new();
+    if quality.clarity < weak_threshold {
+        weak_dims.insert("clarity".into(), serde_json::json!(quality.clarity));
+    }
+    if quality.depth < weak_threshold {
+        weak_dims.insert("depth".into(), serde_json::json!(quality.depth));
+    }
+    if quality.breadth < weak_threshold {
+        weak_dims.insert("breadth".into(), serde_json::json!(quality.breadth));
+    }
+    if quality.logic < weak_threshold {
+        weak_dims.insert("logic".into(), serde_json::json!(quality.logic));
+    }
+    if quality.relevance < weak_threshold {
+        weak_dims.insert("relevance".into(), serde_json::json!(quality.relevance));
+    }
+    if quality.actionability < weak_threshold {
+        weak_dims.insert("actionability".into(), serde_json::json!(quality.actionability));
+    }
+
+    let bias_list: Vec<serde_json::Value> = biases
+        .iter()
+        .map(|b| {
+            serde_json::json!({
+                "type": format!("{:?}", b.bias_type),
+                "confidence": b.confidence,
+                "suggestion": b.suggestion,
+            })
+        })
+        .collect();
+
+    let mut result = serde_json::json!({
+        "stage": format!("{:?}", stage),
+        "ewma": ewma.percentage(),
+        "trust": verdict.trust_score,
+        "budget": format!("{:?}", budget),
+        "weakDimensions": weak_dims,
+        "warnings": verdict.warnings.iter()
+            .chain(metacog.warnings.iter())
+            .collect::<Vec<_>>(),
+        "biases": bias_list,
+        "shouldReject": verdict.should_reject,
+        "shouldEarlyStop": verdict.should_early_stop,
+        "fillerRatio": metacog.filler_ratio,
+        "contentWordRatio": metacog.content_word_ratio,
+    });
+
+    if is_sandbox_result {
+        if let Some(out) = sandbox_output {
+            result["sandbox"] = serde_json::json!(out);
+        }
+    }
+
+    serde_json::to_string(&result).unwrap_or_default()
 }
 
 #[cfg(test)]
@@ -196,8 +245,6 @@ mod tests {
             filler_ratio: 0.05,
             content_word_ratio: 0.7,
             claim_density: 0.5,
-            fallacies: vec![],
-            has_dialectical: true,
             warnings: vec![],
         };
 
@@ -209,8 +256,6 @@ mod tests {
             &verdict,
             &metacog,
             &[],
-            &[],
-            None,
             3,
             false,
             None,
@@ -255,8 +300,6 @@ mod tests {
             filler_ratio: 0.0,
             content_word_ratio: 0.7,
             claim_density: 0.5,
-            fallacies: vec![],
-            has_dialectical: true,
             warnings: vec![],
         };
 
@@ -268,8 +311,6 @@ mod tests {
             &verdict,
             &metacog,
             &[],
-            &[],
-            None,
             1,
             false,
             None,

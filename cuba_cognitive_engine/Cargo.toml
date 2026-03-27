@@ -23,10 +23,6 @@ thiserror = "2.0"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 
-# Memory Bounds and Arena Allocators (For O(1) MCTS cleanup)
-bumpalo = { version = "3.20", features = ["collections"] }  # Fast arena allocation
-typed-arena = "2.0"
-
 # Mathematical verification (Micro-PRM and Physics)
 regex = "1.12"
 futures = "0.3"

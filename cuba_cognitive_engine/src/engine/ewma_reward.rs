@@ -84,45 +84,6 @@ impl RewardSignals {
         self.composite_dynamic(&priors, SOFTMAX_TAU)
     }
 
-    /// V7 (P3-E): Stage-adaptive composite scoring.
-    ///
-    /// Early stages (DEFINE/RESEARCH) boost quality weight to reward
-    /// breadth of exploration. Late stages (VERIFY/SYNTHESIZE) boost
-    /// faithfulness + grounding to reward rigor and evidence.
-    ///
-    /// V9: Stage priors modulate the Softmax attention mechanism.
-    /// Accepts stage as lowercase string slice for loose coupling.
-    #[allow(dead_code)]
-    pub fn composite_for_stage(&self, stage: Option<&str>) -> f64 {
-        let priors = match stage {
-            Some("define" | "research") => [
-                0.45, // +0.05 quality: reward exploration
-                0.20, // coherence unchanged
-                0.10, // contradiction unchanged
-                0.05, // -0.05 faithfulness: less strict early
-                0.15, // +0.05 info_gain: reward novelty
-                0.05, // -0.05 grounding: less strict early
-            ],
-            Some("verify" | "synthesize") => [
-                0.30, // -0.10 quality: less weight on breadth
-                0.15, // -0.05 coherence: allow focused jumps
-                0.10, // contradiction unchanged
-                0.20, // +0.10 faithfulness: reward rigor
-                0.05, // -0.05 info_gain: less novelty pressure
-                0.20, // +0.10 grounding: demand evidence
-            ],
-            _ => [
-                W_QUALITY,
-                W_COHERENCE,
-                W_CONTRADICTION,
-                W_FAITHFULNESS,
-                W_INFO_GAIN,
-                W_GROUNDING,
-            ],
-        };
-        self.composite_dynamic(&priors, SOFTMAX_TAU)
-    }
-
     /// V9: Softmax Gated Attention composite — dynamic weight allocation.
     ///
     /// Algorithm (adapted from Fin-PRM Equation 22, Zhou et al. 2025):
@@ -147,11 +108,21 @@ impl RewardSignals {
         ];
         let mean = signals.iter().sum::<f64>() / 6.0;
 
+        // Log-sum-exp trick for numerical stability:
+        // Subtract max(advantage) before exp() to prevent overflow.
+        let mut advantages = [0.0_f64; 6];
+        let mut max_adv = f64::NEG_INFINITY;
+        for i in 0..6 {
+            advantages[i] = (signals[i] - mean) / tau;
+            if advantages[i] > max_adv {
+                max_adv = advantages[i];
+            }
+        }
+
         let mut exp_weights = [0.0_f64; 6];
         let mut sum_exp = 0.0_f64;
         for i in 0..6 {
-            let advantage = (signals[i] - mean) / tau;
-            exp_weights[i] = priors[i] * advantage.exp();
+            exp_weights[i] = priors[i] * (advantages[i] - max_adv).exp();
             sum_exp += exp_weights[i];
         }
 
@@ -237,75 +208,6 @@ impl EwmaTracker {
         self.value < self.budget_mode.mcts_threshold()
     }
 
-    /// V5-4: Hedged MCTS Rejection — stochastic threshold zone.
-    ///
-    /// Prevents Reward Hacking (NeurIPS 2025): LLMs mathematically discover
-    /// deterministic thresholds and engineer outputs to surf at threshold+ε.
-    /// The sigmoid zone makes the exact cutoff unknowable.
-    ///
-    /// Zones:
-    /// - diff < -0.05: deterministic reject (saves compute)
-    /// - diff > +0.05: deterministic accept
-    /// - [-0.05, +0.05]: sigmoid probability P(reject) = 1/(1+e^(20·diff))
-    ///
-    /// Seed: O(1) from EWMA state — no RNG dependency.
-    #[allow(dead_code)]
-    pub fn should_reject_hedged(&self) -> bool {
-        if self.step_count <= 3 {
-            return false; // Warmup guard
-        }
-
-        let threshold = self.budget_mode.mcts_threshold();
-        let diff = self.value - threshold;
-
-        // Deterministic zones (avoid unnecessary computation)
-        if diff < -0.05 {
-            return true;
-        }
-        if diff > 0.05 {
-            return false;
-        }
-
-        // Hedging zone: sigmoid rejection probability
-        // At diff=0 → P=50%, diff=-0.04 → P≈68%, diff=+0.04 → P≈31%
-        let rejection_prob = 1.0 / (1.0 + (20.0 * diff).exp());
-
-        // O(1) deterministic seed from EWMA state — reproducible but unpredictable
-        let seed = (self.value * 10000.0).fract().abs();
-        seed < rejection_prob
-    }
-
-    /// V5-5: Process Advantage Verifier (PAV) — ICLR 2026.
-    ///
-    /// Measures how much the current step exceeds the historical baseline
-    /// (V(s) = EWMA value). Penalizes "vacuous depth" — syntactically perfect
-    /// steps that don't advance the reasoning toward the solution.
-    ///
-    /// Formula:
-    ///   advantage = reward - V(s)
-    ///   scaled = tanh(3 · advantage)  // [-1, 1]
-    ///   PAV = 0.70 · reward + 0.30 · (scaled/2 + 0.5)  // [0, 1]
-    ///
-    /// Blend: 70% static quality + 30% momentum advantage.
-    #[allow(dead_code)]
-    pub fn compute_process_advantage(&self, current_reward: f64) -> f64 {
-        if self.step_count == 0 {
-            return current_reward;
-        }
-
-        let baseline_v = self.value; // Historical expectation V(s)
-        let advantage = current_reward - baseline_v; // A(s,a)
-
-        // Hyperbolic tangent normalization:
-        // - Penalizes stagnation (advantage ≤ 0)
-        // - Asymptotically scales genuine progress
-        let scaled_advantage = (advantage * 3.0).tanh();
-
-        // 70% static quality + 30% momentum
-        let pav_score = (current_reward * 0.70) + ((scaled_advantage * 0.5 + 0.5) * 0.30);
-        pav_score.clamp(0.0, 1.0)
-    }
-
     /// Check for stagnation: 3+ consecutive thoughts with similar EWMA.
     /// V15: Only after thought #2.
     pub fn is_stagnating(&mut self) -> bool {
@@ -329,14 +231,6 @@ impl EwmaTracker {
         let slice = self.reward_history.make_contiguous();
         let recent = &slice[slice.len() - 4..];
         recent.windows(2).all(|w| w[1] < w[0])
-    }
-
-    /// Check for early stopping opportunity:
-    /// Quality > 0.7 and progress > 70%.
-    /// Reserved for MCTS Phase 4 integration.
-    #[allow(dead_code)]
-    pub fn should_early_stop(&self, progress_pct: f64) -> bool {
-        self.value > 0.7 && progress_pct > 70.0
     }
 
     /// Find the best thought index (highest reward) for backtracking.
@@ -379,38 +273,6 @@ impl EwmaTracker {
             s_t = (s_t + CUSUM_MU - r - CUSUM_K).max(0.0);
             if s_t > CUSUM_H {
                 return true;
-            }
-        }
-        false
-    }
-
-    /// Legacy MACD collapse detection (V3-V4). Retained for reference.
-    /// Superseded by CUSUM (V9) which detects degradation without lag.
-    #[allow(dead_code)]
-    fn is_collapsing_macd_legacy(&self) -> bool {
-        let n = self.reward_history.len();
-        if n < 4 {
-            return false;
-        }
-
-        let vals: Vec<f64> = self.reward_history.iter().copied().collect();
-
-        let mut ema_fast = 0.0;
-        let mut ema_slow = 0.0;
-
-        const BIAS_EPSILON: f64 = 1e-12;
-
-        for (t, &r) in vals.iter().enumerate() {
-            ema_fast = 0.5 * r + 0.5 * ema_fast;
-            ema_slow = 0.2 * r + 0.8 * ema_slow;
-
-            if t == n - 1 {
-                let t_f64 = (t + 1) as f64;
-                let unbiased_fast = ema_fast / (1.0 - 0.5_f64.powf(t_f64)).max(BIAS_EPSILON);
-                let unbiased_slow = ema_slow / (1.0 - 0.8_f64.powf(t_f64)).max(BIAS_EPSILON);
-
-                let macd = unbiased_fast - unbiased_slow;
-                return macd < -0.08;
             }
         }
         false
@@ -775,74 +637,4 @@ mod tests {
         );
     }
 
-    // ─── V7 (P3-E): Stage-Adaptive Composite Tests ────────
-
-    #[test]
-    fn test_stage_adaptive_weights_sum_to_one() {
-        // Verify all stage weight sets sum to 1.0
-        let signals = RewardSignals {
-            quality: 1.0,
-            faithfulness: 1.0,
-            coherence: 1.0,
-            contradiction_rate: 0.0,
-            info_gain: 1.0,
-            grounding: 1.0,
-        };
-        let default = signals.composite();
-        let define = signals.composite_for_stage(Some("define"));
-        let verify = signals.composite_for_stage(Some("verify"));
-        let none = signals.composite_for_stage(None);
-        // All should produce same score when all signals = 1.0
-        // (because weights sum to 1.0 regardless of distribution)
-        assert!(
-            (default - none).abs() < 1e-10,
-            "None stage should match default"
-        );
-        assert!(
-            (default - define).abs() < 1e-10,
-            "All-1.0 signals should match regardless of weights"
-        );
-        assert!(
-            (default - verify).abs() < 1e-10,
-            "All-1.0 signals should match regardless of weights"
-        );
-    }
-
-    #[test]
-    fn test_stage_adaptive_define_boosts_quality() {
-        let signals = RewardSignals {
-            quality: 0.9,
-            faithfulness: 0.3,
-            coherence: 0.7,
-            contradiction_rate: 0.0,
-            info_gain: 0.8,
-            grounding: 0.3,
-        };
-        let default_score = signals.composite();
-        let define_score = signals.composite_for_stage(Some("define"));
-        // DEFINE boosts quality+info_gain, reduces faithfulness+grounding
-        // With high quality (0.9) and low faithfulness (0.3), DEFINE should score higher
-        assert!(define_score > default_score,
-            "DEFINE stage should boost score for high-quality/low-faithfulness: define={:.4} vs default={:.4}",
-            define_score, default_score);
-    }
-
-    #[test]
-    fn test_stage_adaptive_verify_boosts_faithfulness() {
-        let signals = RewardSignals {
-            quality: 0.4,
-            faithfulness: 0.9,
-            coherence: 0.5,
-            contradiction_rate: 0.0,
-            info_gain: 0.3,
-            grounding: 0.9,
-        };
-        let default_score = signals.composite();
-        let verify_score = signals.composite_for_stage(Some("verify"));
-        // VERIFY boosts faithfulness+grounding, reduces quality+info_gain
-        // With high faithfulness (0.9) and low quality (0.4), VERIFY should score higher
-        assert!(verify_score > default_score,
-            "VERIFY stage should boost score for high-faithfulness/low-quality: verify={:.4} vs default={:.4}",
-            verify_score, default_score);
-    }
 }

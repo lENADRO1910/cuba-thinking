@@ -30,7 +30,6 @@ pub struct RpcError {
 /// Incoming JSON-RPC Request
 #[derive(Debug, Deserialize)]
 pub struct RpcRequest {
-    #[allow(dead_code)]
     pub jsonrpc: String,
     pub id: Option<RequestId>, // None for notifications
     #[serde(flatten)]
@@ -43,37 +42,24 @@ pub struct RpcRequest {
 pub enum McpAction {
     #[serde(rename = "initialize")]
     Initialize {
-        #[allow(dead_code)]
         params: Option<Value>,
     },
 
     #[serde(rename = "notifications/initialized")]
     Initialized {
-        #[allow(dead_code)]
         params: Option<Value>,
     },
 
     #[serde(rename = "tools/list")]
     ToolsList {
-        #[allow(dead_code)]
         params: Option<Value>,
     },
 
     #[serde(rename = "tools/call")]
     ToolsCall { params: ToolsCallParams },
 
-    #[serde(rename = "control/steer")]
-    ControlSteer { params: ControlSteerParams },
-
     #[serde(other)]
     Unknown,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ControlSteerParams {
-    pub target_branch_id: usize,
-    pub action: String, // e.g. "prune", "boost"
 }
 
 #[derive(Debug, Deserialize)]
@@ -302,6 +288,11 @@ impl McpServer {
                                 "nextThoughtNeeded": {
                                     "type": "boolean",
                                     "description": "Set to false when this is the final thought"
+                                },
+                                "format": {
+                                    "type": "string",
+                                    "description": "Output format: 'markdown' (default) or 'structured' (compact JSON, ~30% fewer tokens)",
+                                    "enum": ["markdown", "structured"]
                                 }
                             },
                             "required": ["thought"]
@@ -336,6 +327,10 @@ impl McpServer {
                                 "context": {
                                     "type": "string",
                                     "description": "Optional context or hypothesis the reasoning should stay grounded to"
+                                },
+                                "summaryOnly": {
+                                    "type": "boolean",
+                                    "description": "When true, omit per-step report and only return aggregate metrics in _meta (50-70% token savings)"
                                 }
                             },
                             "required": ["thoughts"]
@@ -344,18 +339,6 @@ impl McpServer {
                 ]
             }))),
             McpAction::ToolsCall { params } => self.handle_tool_call(params, tx).await,
-            McpAction::ControlSteer { params } => {
-                tracing::info!(
-                    "Received Mid-Turn Steering Interruption for branch_id: {} with action: {}",
-                    params.target_branch_id,
-                    params.action
-                );
-                // Implementation for runtime interception will follow
-                Ok(Some(serde_json::json!({
-                    "status": "steered",
-                    "branch_id": params.target_branch_id
-                })))
-            }
             McpAction::Unknown => {
                 if req.id.is_none() {
                     Ok(None)
@@ -433,7 +416,7 @@ impl McpServer {
         let progress_token = params._meta.as_ref().and_then(|m| m.progress_token.clone());
         let tx_prog = tx.clone();
 
-        Self::emit_progress(&tx_prog, progress_token.clone(), 5.0, 100.0).await;
+        Self::emit_progress(&tx_prog, progress_token.clone(), 0.0, 100.0).await;
 
         // ─── Parse Input Arguments ───────────────────────────────
         let arguments = params.arguments.clone().unwrap_or(serde_json::json!({}));
@@ -459,10 +442,15 @@ impl McpServer {
             .get("thoughtNumber")
             .and_then(Value::as_u64)
             .unwrap_or(1) as usize;
-        let is_final = arguments
+        let _is_final = arguments
             .get("nextThoughtNeeded")
             .and_then(Value::as_bool)
             .map(|v| !v) // nextThoughtNeeded=false means this IS the final thought
+            .unwrap_or(false);
+        let use_structured = arguments
+            .get("format")
+            .and_then(Value::as_str)
+            .map(|f| f == "structured")
             .unwrap_or(false);
 
         // ─── Import Cognitive Modules ────────────────────────────
@@ -470,14 +458,13 @@ impl McpServer {
         use crate::engine::bias_detector;
         use crate::engine::budget::BudgetMode;
         use crate::engine::ewma_reward::RewardSignals;
-        use crate::engine::memory_bridge;
         use crate::engine::metacognition;
         use crate::engine::quality_metrics;
         use crate::engine::stage_engine::{detect_stage, CognitiveStage, StageSession};
 
         use crate::engine::formatter;
 
-        Self::emit_progress(&tx_prog, progress_token.clone(), 15.0, 100.0).await;
+        // (progress notification removed — reduced to 3: start/middle/complete)
 
         // ─── R5: Budget Mode ─────────────────────────────────────
         let budget = BudgetMode::from_str_opt(budget_str);
@@ -507,7 +494,6 @@ impl McpServer {
             .unwrap_or_default();
         let stage_warnings = session.advance(Some(stage), hypothesis, &new_assumptions);
 
-        Self::emit_progress(&tx_prog, progress_token.clone(), 30.0, 100.0).await;
 
         // ─── R2: Quality Metrics 6D ──────────────────────────────
         // Extract context keywords from hypothesis for relevance scoring
@@ -610,13 +596,15 @@ impl McpServer {
             info_gain,
             grounding: final_grounding,
         };
-        sessions.with_session(hypothesis, budget, |session| {
-            session.ewma.update(&final_signals);
-            // NEW-1: Record confidence for oscillation detection
-            session.record_confidence(confidence);
-            trend = TrendIndicator::from_ewma(&session.ewma);
-            ewma_clone = session.ewma.clone();
-        });
+        // Consolidated lock: EWMA update + confidence + oscillation + thought count
+        let (is_oscillating, session_thought_count) =
+            sessions.with_session(hypothesis, budget, |session| {
+                session.ewma.update(&final_signals);
+                session.record_confidence(confidence);
+                trend = TrendIndicator::from_ewma(&session.ewma);
+                ewma_clone = session.ewma.clone();
+                (session.is_confidence_oscillating(), session.thought_count())
+            });
         let mut ewma = ewma_clone;
 
         // Format sandbox output
@@ -656,7 +644,6 @@ impl McpServer {
         };
         let confidence_delta = calibrated_confidence - confidence;
 
-        Self::emit_progress(&tx_prog, progress_token.clone(), 65.0, 100.0).await;
 
         // ─── R4+R10: Anti-Hallucination ──────────────────────────
         let verdict = anti_hallucination::verify_thought(
@@ -678,7 +665,6 @@ impl McpServer {
             matches!(stage, CognitiveStage::Verify | CognitiveStage::Synthesize);
         let metacog = metacognition::analyze_metacognition(thought, is_verify_or_synth);
 
-        Self::emit_progress(&tx_prog, progress_token.clone(), 80.0, 100.0).await;
 
         // ─── Phase 5B: Stage-Content Alignment (G8) ─────────────
         use crate::engine::stage_validator;
@@ -692,104 +678,102 @@ impl McpServer {
         let reasoning_type = metacognition::classify_reasoning_type(thought);
 
         // ─── Phase 5B: Corrective Directives (G2, G7, G9) ───────
+        // Short-circuit: skip directive computation when EWMA > 70%
+        // (directives are only emitted below 70% — computing them is waste).
         use crate::engine::corrective_directives;
-        let claim_count = verdict.layers.claim_count;
         let is_code = crate::engine::shared_utils::is_code_input(thought);
-        let mut directives = corrective_directives::generate_directives(
-            &quality,
-            &verdict,
-            &metacog,
-            claim_count,
-            is_code,
-        );
+        let mut directives = if ewma.percentage() < 70.0 {
+            let claim_count = verdict.layers.claim_count;
+            let mut dirs = corrective_directives::generate_directives(
+                &quality,
+                &verdict,
+                &metacog,
+                claim_count,
+                is_code,
+            );
 
-        // ─── G5: Reflexion Self-Evaluation (Shinn 2023) ──────────
-        if let Some(reflexion) =
-            corrective_directives::generate_reflexion_directive(verdict.trust_score, thought_number)
-        {
-            directives.push(reflexion);
-        }
+            // G5: Reflexion Self-Evaluation (Shinn 2023)
+            if let Some(reflexion) =
+                corrective_directives::generate_reflexion_directive(verdict.trust_score, thought_number)
+            {
+                dirs.push(reflexion);
+            }
 
-        // NEW-1: Confidence oscillation detection
-        let is_oscillating = sessions.with_session(hypothesis, budget, |session| {
-            session.is_confidence_oscillating()
-        });
-        if is_oscillating {
-            directives.push(corrective_directives::generate_oscillation_directive());
-        }
+            if is_oscillating {
+                dirs.push(corrective_directives::generate_oscillation_directive());
+            }
 
-        // Vector 4: Kinematic collapse prediction (v_t + a_t)
-        let is_collapsing = ewma.is_collapsing_kinematically();
-        if is_collapsing {
-            directives.push(corrective_directives::Directive {
-                severity: corrective_directives::Severity::Warning,
-                dimension: "Kinematic",
-                instruction: "📉 KINEMATIC COLLAPSE: Your reasoning quality is \
-                    falling with increasing acceleration. The current trajectory \
-                    predicts rejection within 1-2 steps. STOP and re-anchor: \
-                    (1) What was your strongest validated conclusion? \
-                    (2) Build from there, discarding speculative branches."
-                    .to_string(),
-            });
-        }
-
-        // ─── N3: Reward Consistency Check (PRM↔EWMA divergence) ──
-        // Statistical basis: If PRM and EWMA estimate the same μ with
-        // σ ≈ 0.15 each, |PRM - EWMA| ~ HalfNormal(σ√2 ≈ 0.21).
-        // Threshold 0.4 → Z ≈ 1.9 → P(false alarm) ≈ 2.9%.
-        if is_sandbox {
-            let ewma_pct = ewma.percentage() / 100.0;
-            let divergence = (prm_score - ewma_pct).abs();
-            if divergence > 0.4 {
-                directives.push(corrective_directives::Directive {
+            // Kinematic collapse prediction
+            if ewma.is_collapsing_kinematically() {
+                dirs.push(corrective_directives::Directive {
                     severity: corrective_directives::Severity::Warning,
-                    dimension: "Consistency",
-                    instruction: format!(
-                        "🔀 REWARD DIVERGENCE: PRM ({:.0}%) and EWMA ({:.0}%) diverge by {:.0}pp \
-                         (threshold: 40pp, Z≈1.9). This may indicate reward gaming — \
-                         high code scores without proportional reasoning quality, or vice versa.",
-                        prm_score * 100.0,
-                        ewma_pct * 100.0,
-                        divergence * 100.0
-                    ),
+                    dimension: "Kinematic",
+                    instruction: "KINEMATIC COLLAPSE: Reasoning quality falling with increasing \
+                        acceleration. STOP and re-anchor from your strongest validated conclusion."
+                        .to_string(),
                 });
             }
-        }
 
-        // ─── R9: Graph-of-Thought (from persistent session) ──────
-        let topology = sessions.with_session(hypothesis, budget, |session| {
-            session.graph.topology_summary()
-        });
+            // N3: Reward Consistency Check (PRM↔EWMA divergence)
+            if is_sandbox {
+                let ewma_pct = ewma.percentage() / 100.0;
+                let divergence = (prm_score - ewma_pct).abs();
+                if divergence > 0.4 {
+                    dirs.push(corrective_directives::Directive {
+                        severity: corrective_directives::Severity::Warning,
+                        dimension: "Consistency",
+                        instruction: format!(
+                            "REWARD DIVERGENCE: PRM ({:.0}%) and EWMA ({:.0}%) diverge by {:.0}pp. \
+                             Possible reward gaming.",
+                            prm_score * 100.0,
+                            ewma_pct * 100.0,
+                            divergence * 100.0
+                        ),
+                    });
+                }
+            }
 
-        // ─── R11: Memory Bridge ──────────────────────────────────
-        let memory_instructions =
-            memory_bridge::generate_memory_instructions(stage, thought_number, is_final, thought);
+            dirs
+        } else {
+            Vec::new()
+        };
 
-        Self::emit_progress(&tx_prog, progress_token.clone(), 90.0, 100.0).await;
 
         // ─── R12: Format Output ──────────────────────────────────
-        let formatted = formatter::format_engine_output(
-            stage,
-            &session,
-            &quality,
-            &ewma,
-            &verdict,
-            &metacog,
-            &biases,
-            &memory_instructions,
-            Some(&topology),
-            thought_number,
-            is_sandbox,
-            sandbox_text,
-            budget,
-        );
+        let formatted = if use_structured {
+            formatter::format_engine_output_structured(
+                stage,
+                &quality,
+                &ewma,
+                &verdict,
+                &metacog,
+                &biases,
+                is_sandbox,
+                sandbox_text,
+                budget,
+            )
+        } else {
+            formatter::format_engine_output(
+                stage,
+                &session,
+                &quality,
+                &ewma,
+                &verdict,
+                &metacog,
+                &biases,
+                thought_number,
+                is_sandbox,
+                sandbox_text,
+                budget,
+            )
+        };
 
         // ─── Phase 5B: Append directives + trend + drift ─────────
         let mut final_output = formatted;
 
         // Trend indicator (G10) — F22: English
         if trend != crate::engine::thought_session::TrendIndicator::Insufficient {
-            final_output.push_str(&format!("\n📈 Trend: {} {}", trend.emoji(), trend.label()));
+            final_output.push_str(&format!("\nTrend: {}", trend.label()));
         }
 
         // Hypothesis drift warning (G11) — F22: English
@@ -849,8 +833,6 @@ impl McpServer {
 
         // ─── Build Response ──────────────────────────────────────
         let is_error = verdict.should_reject;
-        let session_thought_count =
-            sessions.with_session(hypothesis, budget, |s| s.thought_count());
         let response = serde_json::json!({
             "content": [{
                 "type": "text",
@@ -970,6 +952,10 @@ impl McpServer {
             .get("context")
             .and_then(|v: &Value| v.as_str())
             .unwrap_or("");
+        let summary_only = arguments
+            .get("summaryOnly")
+            .and_then(|v: &Value| v.as_bool())
+            .unwrap_or(false);
 
         if thoughts.is_empty() {
             return Err(RpcError {
@@ -1024,38 +1010,40 @@ impl McpServer {
             let grounding = claim_grounding::analyze_grounding(thought);
             all_grounding.push(grounding.grounding);
 
-            // Per-step report
-            let coherence_icon = if coherence > 0.5 {
-                "✅"
-            } else if coherence > 0.2 {
-                "⚠️"
-            } else {
-                "🔴"
-            };
-            let novelty_icon = if novelty > 0.3 {
-                "✅"
-            } else if novelty > 0.1 {
-                "⚠️"
-            } else {
-                "🔄"
-            };
+            // Per-step report (skip when summary_only)
+            if !summary_only {
+                let coherence_icon = if coherence > 0.5 {
+                    "+"
+                } else if coherence > 0.2 {
+                    "~"
+                } else {
+                    "-"
+                };
+                let novelty_icon = if novelty > 0.3 {
+                    "+"
+                } else if novelty > 0.1 {
+                    "~"
+                } else {
+                    "-"
+                };
 
-            output.push_str(&format!(
-                "**Step {}**: Coherence {} {:.0}% | Novelty {} {:.0}% | Grounding {:.0}%",
-                step,
-                coherence_icon,
-                coherence * 100.0,
-                novelty_icon,
-                novelty * 100.0,
-                grounding.grounding * 100.0
-            ));
-            if !contra.contradictions.is_empty() {
                 output.push_str(&format!(
-                    " | ⚡ {} contradictions",
-                    contra.contradictions.len()
+                    "Step {}: Coherence [{}] {:.0}% | Novelty [{}] {:.0}% | Grounding {:.0}%",
+                    step,
+                    coherence_icon,
+                    coherence * 100.0,
+                    novelty_icon,
+                    novelty * 100.0,
+                    grounding.grounding * 100.0
                 ));
+                if !contra.contradictions.is_empty() {
+                    output.push_str(&format!(
+                        " | {} contradictions",
+                        contra.contradictions.len()
+                    ));
+                }
+                output.push('\n');
             }
-            output.push('\n');
         }
 
         // Aggregate metrics

@@ -218,18 +218,6 @@ impl LocalReasoningEngine {
         }
     }
 
-    /// Legacy interface for AgentRouter compatibility (DEBT-T09 partial).
-    /// Delegates to execute() and serializes result.
-    #[allow(dead_code)]
-    pub async fn evaluate_branch(
-        &self,
-        _system_prompt: &str,
-        _context: &str,
-        thought: &str,
-    ) -> Result<String> {
-        let result = self.execute(thought).await;
-        Ok(serde_json::to_string(&result)?)
-    }
 }
 
 /// Extract Python code from markdown-style code blocks.
