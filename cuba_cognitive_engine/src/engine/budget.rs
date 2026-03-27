@@ -59,30 +59,6 @@ impl BudgetMode {
         }
     }
 
-    /// Quality gate threshold for early exit on low quality.
-    /// V6: Optimal Stopping (Wald, 1945). Reserved for MCTS integration.
-    #[allow(dead_code)]
-    pub fn quality_gate(self) -> f64 {
-        match self {
-            BudgetMode::Fast => 0.30,
-            BudgetMode::Balanced => 0.25,
-            BudgetMode::Thorough => 0.20,
-            BudgetMode::Exhaustive => 0.15,
-        }
-    }
-
-    /// Maximum recommended thoughts for this budget level.
-    /// Reserved for MCTS thought-count enforcement.
-    #[allow(dead_code)]
-    pub fn max_thoughts(self) -> usize {
-        match self {
-            BudgetMode::Fast => 5,
-            BudgetMode::Balanced => 10,
-            BudgetMode::Thorough => 20,
-            BudgetMode::Exhaustive => 50,
-        }
-    }
-
     /// G3: Word-count threshold for length-proportional quality penalty.
     /// Thoughts exceeding this length get a quality penalty unless they
     /// add proportional information density (DeepSeek R1, 2025).
@@ -141,8 +117,4 @@ mod tests {
         assert!(BudgetMode::Fast.ewma_alpha_floor() > BudgetMode::Exhaustive.ewma_alpha_floor());
     }
 
-    #[test]
-    fn test_max_thoughts_increase_with_depth() {
-        assert!(BudgetMode::Fast.max_thoughts() < BudgetMode::Exhaustive.max_thoughts());
-    }
 }

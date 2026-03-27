@@ -154,28 +154,6 @@ pub fn generate_directives(
         });
     }
 
-    // F18: Dialectics not meaningful for code
-    if !is_code && !metacog.has_dialectical {
-        directives.push(Directive {
-            severity: Severity::Info,
-            dimension: "Dialectics",
-            instruction: "Consider counter-arguments before concluding. What evidence contradicts your position?".to_string(),
-        });
-    }
-
-    if !metacog.fallacies.is_empty() {
-        for fallacy in &metacog.fallacies {
-            directives.push(Directive {
-                severity: Severity::Warning,
-                dimension: "Fallacy",
-                instruction: format!(
-                    "Fallacy detected: {} — '{}'. Review the logic of that argument.",
-                    fallacy.fallacy_type, fallacy.evidence
-                ),
-            });
-        }
-    }
-
     // ─── Complexity / Decomposition Directive (G9) ───────────────
     if claim_count > 5 {
         directives.push(Directive {
@@ -306,8 +284,6 @@ mod tests {
             filler_ratio: 0.05,
             content_word_ratio: 0.7,
             claim_density: 0.5,
-            fallacies: vec![],
-            has_dialectical: true,
             warnings: vec![],
         }
     }
@@ -416,23 +392,6 @@ mod tests {
 
         let directives = generate_directives(&quality, &default_verdict(), &metacog, 3, false);
         assert!(directives.iter().any(|d| d.dimension == "Filler"));
-    }
-
-    #[test]
-    fn test_dialectical_directive() {
-        let quality = QualityScores {
-            clarity: 0.8,
-            depth: 0.8,
-            breadth: 0.8,
-            logic: 0.8,
-            relevance: 0.8,
-            actionability: 0.8,
-        };
-        let mut metacog = default_metacog();
-        metacog.has_dialectical = false;
-
-        let directives = generate_directives(&quality, &default_verdict(), &metacog, 3, false);
-        assert!(directives.iter().any(|d| d.dimension == "Dialectics"));
     }
 
     #[test]

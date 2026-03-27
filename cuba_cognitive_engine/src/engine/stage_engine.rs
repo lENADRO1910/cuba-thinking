@@ -22,8 +22,7 @@ pub enum CognitiveStage {
 }
 
 impl CognitiveStage {
-    /// All stages in progression order. Used by tests and Phase 4 MCTS iteration.
-    #[allow(dead_code)]
+    /// All stages in progression order.
     pub const ALL: [CognitiveStage; 6] = [
         CognitiveStage::Define,
         CognitiveStage::Research,
@@ -94,22 +93,6 @@ impl CognitiveStage {
         }
     }
 
-    /// NLI contradiction threshold for this stage (V5: stage-weighted).
-    /// Progressive strictness: DEFINE is permissive, SYNTHESIZE is strict.
-    /// Based on Signal Detection Theory (Green & Swets, 1966).
-    /// Reserved for Phase 3 (S2: NLI Contradiction Detection).
-    #[allow(dead_code)]
-    pub fn contradiction_threshold(self) -> f64 {
-        match self {
-            CognitiveStage::Define => 0.80,
-            CognitiveStage::Research => 0.70,
-            CognitiveStage::Analyze => 0.60,
-            CognitiveStage::Hypothesize => 0.55,
-            CognitiveStage::Verify => 0.50,
-            CognitiveStage::Synthesize => 0.45,
-        }
-    }
-
     /// Whether this stage requires CoVe (Chain-of-Verification) checkpoint.
     /// V13: 3 transitions require verification.
     pub fn requires_cove_checkpoint(self, previous: CognitiveStage) -> bool {
@@ -122,10 +105,7 @@ impl CognitiveStage {
     }
 }
 
-/// P2-4: Stage detection from explicit metadata.
-/// Prioritizes user-specified stage over content heuristics.
-/// Returns None if the metadata stage string is invalid or missing.
-#[allow(dead_code)]
+/// Stage detection from explicit metadata string.
 pub fn detect_stage_from_metadata(stage_str: &str) -> Option<CognitiveStage> {
     match stage_str.to_uppercase().as_str() {
         "DEFINE" => Some(CognitiveStage::Define),
@@ -346,8 +326,6 @@ impl StageSession {
     }
 
     /// Mark the session as completed.
-    /// Reserved for multi-session state tracking.
-    #[allow(dead_code)]
     pub fn complete(&mut self) {
         self.completed = true;
     }

@@ -64,19 +64,6 @@ pub struct PrmSignals {
 // Key property: uncompilable code CANNOT score > 0.05 regardless of
 // diversity or coverage, eliminating the gaming vector.
 
-/// Legacy flat weights retained for backward reference and static analysis.
-#[allow(dead_code)]
-const LEGACY_WEIGHTS: [f64; 8] = [
-    0.25, // E1: Compiles (most critical)
-    0.25, // E2: Asserts pass
-    0.10, // E3: Complexity
-    0.08, // E4: Type safety
-    0.05, // E5: Safe imports
-    0.10, // E6: Determinism
-    0.07, // E7: Coverage
-    0.10, // E8: Assert diversity (P3-C)
-];
-
 /// Evaluate a sandbox execution result with 7 PRM signals.
 pub fn evaluate_prm(sandbox: &SandboxResult) -> PrmVerdict {
     let mut explanations = Vec::with_capacity(7);
@@ -268,102 +255,6 @@ pub fn evaluate_prm(sandbox: &SandboxResult) -> PrmVerdict {
 
 /// Evaluate code text without sandbox execution (static analysis only).
 /// Used when sandbox execution is not available or code failed.
-/// Fallback static PRM analysis when sandbox execution fails.
-/// Used by DEBT-T08 fallback path.
-#[allow(dead_code)]
-pub fn evaluate_static(code: &str) -> PrmVerdict {
-    let has_asserts = code.contains("assert ");
-    let has_types = code.contains("-> ") || code.contains(": int") || code.contains(": str");
-    let has_imports = code.contains("import ");
-    let line_count = code.lines().count();
-
-    let e1 = 0.5; // Can't verify without execution
-    let e2 = if has_asserts { 0.5 } else { 0.0 };
-    let e3 = if line_count < 50 { 1.0 } else { 0.5 };
-    let e4 = if has_types { 0.8 } else { 0.2 };
-    let e5 = if !code.contains("subprocess") && !code.contains("os.system") {
-        1.0
-    } else {
-        0.0
-    };
-    let e6 = if !code.contains("random") { 1.0 } else { 0.5 };
-    let e7 = if has_asserts { 0.5 } else { 0.1 };
-    let e8 = if has_asserts { 0.5 } else { 0.2 }; // P3-C: Can't measure without AST
-
-    let signals = PrmSignals {
-        compiles: e1,
-        asserts_pass: e2,
-        complexity_ok: e3,
-        type_safety: e4,
-        imports_safe: e5,
-        deterministic: e6,
-        coverage: e7,
-        assert_diversity: e8,
-    };
-
-    // V9: Apply same Veto Gate system as evaluate_prm
-    let gate = (e1 * 0.7 + e4 * 0.3).max(0.05);
-    let quality_group = e3 * 0.4 + e5 * 0.3 + e6 * 0.3;
-    let verify_group = e2 * 0.4 + e7 * 0.2 + e8 * 0.4;
-    let composite_score = gate * (0.6 * verify_group + 0.4 * quality_group);
-
-    PrmVerdict {
-        signals,
-        composite_score,
-        verdict: "⚠️ Static analysis only (no execution)",
-        explanations: vec![
-            format!("🔍 E1 Compiles: Static analysis only"),
-            format!(
-                "{} E2 Asserts: {}",
-                if has_asserts { "✅" } else { "⚠️" },
-                if has_asserts {
-                    "Detected"
-                } else {
-                    "Not detected"
-                }
-            ),
-            format!("✅ E3 Complexity: {} lines", line_count),
-            format!(
-                "{} E4 Types: {}",
-                if has_types { "✅" } else { "⚠️" },
-                if has_types {
-                    "Annotations detected"
-                } else {
-                    "No annotations"
-                }
-            ),
-            format!(
-                "{} E5 Imports: {}",
-                if has_imports { "✅" } else { "—" },
-                if has_imports { "Present" } else { "No imports" }
-            ),
-            format!(
-                "{} E6 Determinism: {}",
-                if !code.contains("random") {
-                    "✅"
-                } else {
-                    "⚠️"
-                },
-                if !code.contains("random") {
-                    "Deterministic"
-                } else {
-                    "Non-deterministic"
-                }
-            ),
-            format!(
-                "{} E7 Coverage: {}",
-                if has_asserts { "✅" } else { "⚠️" },
-                if has_asserts {
-                    "With verifications"
-                } else {
-                    "No verifications"
-                }
-            ),
-            format!("⚠️ E8 Diversity: Static analysis (no AST)"),
-        ],
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

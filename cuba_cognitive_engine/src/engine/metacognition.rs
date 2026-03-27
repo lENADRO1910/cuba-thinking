@@ -2,12 +2,13 @@
 //
 // R8: Metacognitive Analysis
 //
-// Detects metacognitive issues in reasoning:
-// - Filler ratio (Flavell, 1979 — Metacognition and Cognitive Monitoring)
-// - Claim density (verifiable assertions per sentence)
-// - Fallacy detection (hasty generalization, false dichotomy)
-// - Dialectical reasoning check (counter-arguments in VERIFY/SYNTHESIZE)
-// - Content-word ratio / Verbosity (V3, Graesser 2004 — Coh-Metrix)
+// Simplified: retains filler ratio and content-word ratio as useful metrics.
+// Removed: fallacy detection (keyword-based, high false-positive rate) and
+// dialectical reasoning check (Claude already generates counter-arguments).
+//
+// References:
+// - Filler ratio: Flavell 1979, "Metacognition and Cognitive Monitoring"
+// - Content-word ratio: Graesser 2004, Coh-Metrix
 
 use serde::Serialize;
 use std::collections::HashSet;
@@ -18,77 +19,47 @@ use std::sync::LazyLock;
 pub struct MetacognitiveReport {
     /// Ratio of filler words to total words (lower is better).
     pub filler_ratio: f64,
-    /// Content-Word Ratio: content_words / total_words (V3, Coh-Metrix).
+    /// Content-Word Ratio: content_words / total_words (Coh-Metrix).
     pub content_word_ratio: f64,
     /// Verifiable claims per sentence.
     pub claim_density: f64,
-    /// Detected fallacies.
-    pub fallacies: Vec<DetectedFallacy>,
-    /// Whether dialectical reasoning is present (counter-arguments).
-    pub has_dialectical: bool,
     /// Actionable warnings (only non-empty when issues detected).
     pub warnings: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
-pub struct DetectedFallacy {
-    pub fallacy_type: &'static str,
-    pub evidence: String,
-}
-
 /// Perform metacognitive analysis on a thought.
-pub fn analyze_metacognition(thought: &str, is_verify_or_synthesize: bool) -> MetacognitiveReport {
+pub fn analyze_metacognition(thought: &str, _is_verify_or_synthesize: bool) -> MetacognitiveReport {
     let filler_ratio = compute_filler_ratio(thought);
     let cwr = compute_content_word_ratio(thought);
     let claim_density = compute_claim_density(thought);
-    let fallacies = detect_fallacies(thought);
-    let has_dialectical = check_dialectical(thought);
 
     let mut warnings = Vec::new();
 
     // Filler warning: > 30% filler ratio (Flavell 1979)
     if filler_ratio > 0.30 {
         warnings.push(format!(
-            "🧠 Metacognition: {:.0}% filler ratio — reduce hedging and padding",
+            "Metacognition: {:.0}% filler ratio — reduce hedging and padding",
             filler_ratio * 100.0
         ));
     }
 
-    // Verbosity warning: CWR < 40% (V3, Graesser 2004)
+    // Verbosity warning: CWR < 40% (Graesser 2004)
     if cwr < 0.40 && cwr > 0.0 {
         warnings.push(format!(
-            "📝 Verbosity: Content-word ratio {:.0}% — be more concise",
+            "Verbosity: Content-word ratio {:.0}% — be more concise",
             cwr * 100.0
         ));
-    }
-
-    // Fallacy warnings
-    for fallacy in &fallacies {
-        warnings.push(format!(
-            "⚠️ Fallacy detected: {} — \"{}\"",
-            fallacy.fallacy_type, fallacy.evidence
-        ));
-    }
-
-    // Dialectical check for VERIFY/SYNTHESIZE stages
-    if is_verify_or_synthesize && !has_dialectical {
-        warnings.push(
-            "🔄 Dialectical gap: VERIFY/SYNTHESIZE stage without counter-arguments. Consider opposing viewpoints.".to_string()
-        );
     }
 
     MetacognitiveReport {
         filler_ratio,
         content_word_ratio: cwr,
         claim_density,
-        fallacies,
-        has_dialectical,
         warnings,
     }
 }
 
 /// Compute filler word ratio.
-/// Filler words: hedging, padding, social lubricant phrases.
 fn compute_filler_ratio(text: &str) -> f64 {
     let words: Vec<&str> = text.split_whitespace().collect();
     if words.is_empty() {
@@ -146,9 +117,7 @@ fn compute_filler_ratio(text: &str) -> f64 {
     filler_count as f64 / words.len() as f64
 }
 
-/// Compute Content-Word Ratio (V3, Coh-Metrix / Graesser 2004).
-/// Content words = nouns, verbs, adjectives, adverbs (approximated).
-/// Function words = articles, prepositions, conjunctions, pronouns.
+/// Compute Content-Word Ratio (Coh-Metrix / Graesser 2004).
 fn compute_content_word_ratio(text: &str) -> f64 {
     static FUNCTION_WORDS: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
         [
@@ -158,7 +127,8 @@ fn compute_content_word_ratio(text: &str) -> f64 {
             "into", "through", "during", "before", "after", "above", "below", "between", "and",
             "but", "or", "nor", "not", "so", "yet", "both", "either", "neither", "it", "its",
             "this", "that", "these", "those", "he", "she", "we", "they", "them", "their", "my",
-            "your", "our", "i", "me", "you", // Spanish function words
+            "your", "our", "i", "me", "you",
+            // Spanish function words
             "el", "la", "los", "las", "un", "una", "unos", "unas", "de", "del", "en", "con", "por",
             "para", "sin", "sobre", "entre", "y", "o", "ni", "que", "se", "lo", "le", "les", "su",
             "sus", "mi", "tu", "nos", "es", "son", "fue", "ser", "estar", "hay", "como", "más",
@@ -197,34 +167,11 @@ fn compute_claim_density(text: &str) -> f64 {
         return 0.0;
     }
 
-    // Claim indicators: numbers, comparisons, specific assertions
     let claim_markers = [
-        "is",
-        "are",
-        "was",
-        "causes",
-        "results in",
-        "equals",
-        "greater than",
-        "less than",
-        "requires",
-        "must",
-        "always",
-        "never",
-        "every",
-        "%",
-        "=",
-        ">",
-        "<",
-        "es",
-        "son",
-        "causa",
-        "resulta en",
-        "requiere",
-        "siempre",
-        "nunca",
-        "cada",
-        "todo",
+        "is", "are", "was", "causes", "results in", "equals",
+        "greater than", "less than", "requires", "must", "always", "never", "every",
+        "%", "=", ">", "<",
+        "es", "son", "causa", "resulta en", "requiere", "siempre", "nunca", "cada", "todo",
     ];
 
     let claims: usize = sentences
@@ -244,85 +191,7 @@ fn compute_claim_density(text: &str) -> f64 {
     claims as f64 / sentences.len() as f64
 }
 
-/// Detect logical fallacies.
-fn detect_fallacies(text: &str) -> Vec<DetectedFallacy> {
-    let lower = text.to_lowercase();
-    let mut fallacies = Vec::new();
-
-    // Hasty Generalization: "all X are Y", "every X is Y" without evidence
-    let hasty_markers = [
-        "all ", "every ", "always ", "never ", "todos ", "siempre ", "nunca ",
-    ];
-    for marker in &hasty_markers {
-        if let Some(pos) = lower.find(marker) {
-            let snippet = &text[pos..text.len().min(pos + 60)];
-            // Only flag if no qualifying evidence nearby
-            if !lower[pos..].contains("because")
-                && !lower[pos..].contains("based on")
-                && !lower[pos..].contains("according to")
-                && !lower[pos..].contains("porque")
-                && !lower[pos..].contains("según")
-            {
-                fallacies.push(DetectedFallacy {
-                    fallacy_type: "Hasty Generalization",
-                    evidence: snippet.to_string(),
-                });
-                break; // Only report once
-            }
-        }
-    }
-
-    // False Dichotomy: "either X or Y" with only 2 options
-    if (lower.contains("either") && lower.contains("or"))
-        || (lower.contains("only two") || lower.contains("solo dos"))
-    {
-        // Check that there are genuinely only 2 options presented
-        let or_count = lower.matches(" or ").count() + lower.matches(" o ").count();
-        if or_count == 1 {
-            fallacies.push(DetectedFallacy {
-                fallacy_type: "False Dichotomy",
-                evidence: "Presenting only two options — consider if more alternatives exist"
-                    .to_string(),
-            });
-        }
-    }
-
-    fallacies
-}
-
-/// Check for dialectical reasoning (presence of counter-arguments).
-fn check_dialectical(text: &str) -> bool {
-    let lower = text.to_lowercase();
-    let counter_markers = [
-        "however",
-        "on the other hand",
-        "alternatively",
-        "counter",
-        "against",
-        "drawback",
-        "limitation",
-        "risk",
-        "weakness",
-        "trade-off",
-        "downside",
-        "challenge",
-        "caveat",
-        "sin embargo",
-        "por otro lado",
-        "alternativamente",
-        "en contra",
-        "limitación",
-        "riesgo",
-        "desventaja",
-    ];
-    counter_markers.iter().any(|m| lower.contains(m))
-}
-
 /// G8: Reasoning Type Classification (Walton 2006).
-///
-/// Classifies a thought as deductive, inductive, abductive, or analogical.
-/// Informational-only — helps the agent understand what type of reasoning
-/// it's employing and choose appropriate next strategies.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize)]
 pub enum ReasoningType {
     Deductive,
@@ -348,47 +217,20 @@ pub fn classify_reasoning_type(thought: &str) -> ReasoningType {
     let lower = thought.to_lowercase();
 
     let deductive_kw = [
-        "therefore",
-        "must be",
-        "necessarily",
-        "follows that",
-        "proves",
-        "if and only if",
-        "by definition",
-        "logically",
-        "deduction",
+        "therefore", "must be", "necessarily", "follows that", "proves",
+        "if and only if", "by definition", "logically", "deduction",
     ];
     let inductive_kw = [
-        "pattern suggests",
-        "in most cases",
-        "evidence shows",
-        "likely",
-        "tends to",
-        "usually",
-        "observed that",
-        "data indicates",
-        "correlation",
-        "frequency",
+        "pattern suggests", "in most cases", "evidence shows", "likely",
+        "tends to", "usually", "observed that", "data indicates", "correlation", "frequency",
     ];
     let abductive_kw = [
-        "best explanation",
-        "probably because",
-        "hypothesis is",
-        "could be explained by",
-        "most likely cause",
-        "plausible",
-        "inference to",
-        "suggests that",
+        "best explanation", "probably because", "hypothesis is",
+        "could be explained by", "most likely cause", "plausible", "inference to", "suggests that",
     ];
     let analogical_kw = [
-        "similar to",
-        "just as",
-        "comparable",
-        "analogous",
-        "like",
-        "resembles",
-        "parallels",
-        "same way",
+        "similar to", "just as", "comparable", "analogous", "like",
+        "resembles", "parallels", "same way",
     ];
 
     let d: usize = deductive_kw.iter().filter(|k| lower.contains(**k)).count();
@@ -401,7 +243,6 @@ pub fn classify_reasoning_type(thought: &str) -> ReasoningType {
         return ReasoningType::Mixed;
     }
 
-    // Check for mixed: top two types are close
     let scores = [d, i, a, g];
     let mut sorted = scores;
     sorted.sort_unstable_by(|a, b| b.cmp(a));
@@ -449,28 +290,11 @@ mod tests {
     }
 
     #[test]
-    fn test_dialectical_check_in_verify() {
-        let text = "The approach works perfectly and validates all assumptions.";
-        let report = analyze_metacognition(text, true);
-        assert!(!report.has_dialectical);
-        assert!(report.warnings.iter().any(|w| w.contains("Dialectical")));
-    }
-
-    #[test]
-    fn test_hasty_generalization() {
-        let text = "All databases are slow. Every framework has bugs.";
-        let report = analyze_metacognition(text, false);
-        assert!(!report.fallacies.is_empty());
-        assert_eq!(report.fallacies[0].fallacy_type, "Hasty Generalization");
-    }
-
-    #[test]
     fn test_clean_analysis() {
         let text = "The PostgreSQL query takes 250ms due to sequential scan. \
                      However, adding an index on user_id could reduce this to 5ms \
                      because B-tree lookup is O(log n).";
         let report = analyze_metacognition(text, true);
-        assert!(report.has_dialectical);
         assert!(report.filler_ratio < 0.1);
     }
 }
